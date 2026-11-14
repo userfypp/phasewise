@@ -24,6 +24,7 @@ use crate::state::{
 const KILL_GRACE: Duration = Duration::from_secs(5);
 const MAX_DIRTY_LISTED: usize = 10;
 const PHASE_TIMEOUT_ENV: &str = "PHASEWISE_PHASE_TIMEOUT_SECONDS";
+const MAX_COST_ENV: &str = "PHASEWISE_MAX_COST_USD";
 const PLAN_TIMEOUT_ENV: &str = "PHASEWISE_PLAN_TIMEOUT_SECONDS";
 const PLAN_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 /// Repair rounds after the first answer of `phasewise plan`.
@@ -411,10 +412,21 @@ Unset it or fix the value."
         }
         Err(_) => Duration::from_secs(config.phase_timeout_minutes * 60),
     };
+    let max_cost_usd = match std::env::var(MAX_COST_ENV) {
+        Ok(value) => match value.trim().parse::<f64>() {
+            Ok(limit) if limit.is_finite() && limit > 0.0 => Some(limit),
+            _ => bail!(
+                "{MAX_COST_ENV} must be an amount in US dollars greater than 0, got `{value}`. \
+Unset it or fix the value."
+            ),
+        },
+        Err(_) => config.max_cost_usd,
+    };
     Ok(PhaseSettings {
         max_retries: config.max_retries,
         phase_timeout,
         verify_timeout: Duration::from_secs(config.verify_timeout_seconds),
+        max_cost_usd,
         kill_grace: KILL_GRACE,
         agent_args: config.agent_args.clone(),
     })
@@ -826,6 +838,22 @@ run `git commit`, or discard them with `git reset --hard`."
     })
 }
 
+/// Refuses to start `number` once the run has spent its limit.
+fn check_budget(run: &Run, settings: &PhaseSettings, number: usize) -> Result<()> {
+    let Some(limit) = settings.max_cost_usd else {
+        return Ok(());
+    };
+    let spent = run.state.cost_usd();
+    if spent >= limit {
+        bail!(
+            "The run has spent ${spent:.2} of its ${limit:.2} limit (`max_cost_usd`), so \
+phase {number} was not started. Set {MAX_COST_ENV} to a higher amount and run it again, or \
+finish the remaining phases yourself."
+        );
+    }
+    Ok(())
+}
+
 fn run_one(
     run: &mut Run,
     number: usize,
@@ -835,6 +863,7 @@ fn run_one(
 ) -> Result<PhaseStatus> {
     let agent = agent_for(run.state.agent);
     let settings = settings(run)?;
+    check_budget(run, &settings, number)?;
     let mut ctx = PhaseContext {
         git: &run.git,
         paths: &run.paths,
@@ -890,6 +919,14 @@ fn execute_locked(
         {
             return Ok(status);
         }
+        // Before approving, so the phase stays under review when the run stops.
+        let next = run
+            .state
+            .phases
+            .iter()
+            .find(|p| p.status == PhaseStatus::Pending)
+            .map_or(0, |p| p.number);
+        check_budget(run, &settings(run)?, next)?;
         approve(run)?;
     }
 }

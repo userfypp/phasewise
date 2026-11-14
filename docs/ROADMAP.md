@@ -8,7 +8,7 @@ the case for one is welcome.
 - A separate diff per subagent. Today subagent activity is only labelled in the
   log.
 - More agents, such as Gemini CLI or opencode.
-- Spending limits per phase or per run.
+- A spending limit per phase, and limits for agents that report tokens instead of cost.
 - Sanitized captures of real agent output as test fixtures.
 - Windows support.
 

@@ -224,6 +224,11 @@ pub fn truncate_summary(s: &str) -> String {
 }
 
 impl RunState {
+    /// What the agents of every phase reported spending so far, in US dollars.
+    pub fn cost_usd(&self) -> f64 {
+        self.phases.iter().filter_map(|p| p.cost_usd).sum()
+    }
+
     /// A new active run with every phase pending.
     // The run is described by these independent fields; a parameter struct would
     // only move the same list to the call site.

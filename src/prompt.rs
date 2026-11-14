@@ -203,6 +203,7 @@ Unknown keys are errors. Every key is optional:
 - max_retries (integer >= 0, default 1): automatic retries when a check fails.
 - phase_timeout_minutes (integer >= 1, default 60): time limit for the agent in one phase.
 - verify_timeout_seconds (integer >= 1, default 600): time limit for each check command.
+- max_cost_usd (number > 0, unset by default): spending limit for the whole run. Leave it unset.
 - agent_args (array of strings, default []): extra arguments for the agent command line. Leave it unset.
 - model (string, unset by default): model for every phase.
 - effort (string, unset by default): low, medium, high, xhigh or max.
@@ -470,6 +471,7 @@ Do the second thing.
             "max_retries",
             "phase_timeout_minutes",
             "verify_timeout_seconds",
+            "max_cost_usd",
             "agent_args",
             "model",
             "effort",

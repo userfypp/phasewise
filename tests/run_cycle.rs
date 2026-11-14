@@ -224,6 +224,55 @@ fn verify_failure_is_retried_in_the_same_session() {
 }
 
 #[test]
+fn the_spending_limit_stops_the_run_before_the_next_phase() {
+    // The fake agent reports $0.01 per attempt.
+    let env = Env::with_plan(&plan_with("max_cost_usd = 0.02\n"));
+    let out = env.exec(&["run", "--auto"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stderr.contains("$0.02 of its $0.02 limit"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(
+        env.statuses(),
+        ["done", "awaiting_review", "pending"],
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn the_environment_raises_the_spending_limit() {
+    let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
+    env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);
+    assert_eq!(env.statuses()[2], "awaiting_review");
+}
+
+#[test]
+fn a_bad_spending_limit_in_the_environment_is_refused() {
+    let env = Env::new();
+    let out = env.exec(&["run"], &[("PHASEWISE_MAX_COST_USD", "abc")]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stderr.contains("PHASEWISE_MAX_COST_USD must be"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn the_spending_limit_prevents_a_retry() {
+    let env = Env::with_plan(&plan_with("max_cost_usd = 0.005\n"));
+    let out = env.exec(&["run"], &[("FAKE_MODE", "fix_on_resume")]);
+    assert_eq!(out.code, 3, "{}\n{}", out.stdout, out.stderr);
+    let (kind, detail) = failure_of(&env.state(), 1);
+    assert_eq!(kind, "verify_failed");
+    assert!(detail.contains("Not retrying"), "{detail}");
+    assert_eq!(env.state()["phases"][0]["attempts"], 1);
+}
+
+#[test]
 fn definitive_verify_failure_keeps_the_tree() {
     let env = Env::new();
     let out = env.exec(&["run"], &[("FAKE_MODE", "never_fixes")]);

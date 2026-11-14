@@ -368,6 +368,9 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
     outln!("Max retries: {}", config.max_retries);
     outln!("Phase timeout: {} min", config.phase_timeout_minutes);
     outln!("Check timeout: {} s", config.verify_timeout_seconds);
+    if let Some(limit) = config.max_cost_usd {
+        outln!("Spending limit: ${limit:.2}");
+    }
     outln!();
     for phase in &plan.phases {
         outln!(

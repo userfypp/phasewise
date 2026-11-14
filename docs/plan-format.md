@@ -28,9 +28,22 @@ Every key is optional.
 | `max_retries` | integer >= 0 | `1` | Automatic retries when verification fails. |
 | `phase_timeout_minutes` | integer >= 1 | `60` | Time limit for the agent in one phase. |
 | `verify_timeout_seconds` | integer >= 1 | `600` | Time limit for each verification command. |
+| `max_cost_usd` | number > 0 | unset | Spending limit for the whole run, in US dollars; see [Spending limit](#spending-limit). |
 | `agent_args` | array of strings | `[]` | Extra arguments for the agent command line. |
 | `model` | string | unset | Model for every phase; see [Model and effort](#model-and-effort). |
 | `effort` | string | unset | Effort for every phase: `low`, `medium`, `high`, `xhigh` or `max`. |
+
+## Spending limit
+
+`max_cost_usd` caps what a run may spend. phasewise adds up the cost each
+phase's agent reports and checks it at two points: it does not retry a failed
+check once the run has reached the limit, and it does not start the next phase
+(in `--auto`, it stops before approving the one under review). Cost is checked
+between agent sessions, so a session that is already running can go over the
+limit. Only Claude Code reports a cost; with Codex the limit never triggers.
+
+`PHASEWISE_MAX_COST_USD` overrides the limit for one command, for example to
+finish a run that stopped at its limit.
 
 ## Phases and titles
 
@@ -115,7 +128,7 @@ line, and exits with code 1:
 - front matter that is not closed (line 1);
 - unknown key (named in the message), invalid TOML or wrong value type;
 - unknown `agent` (the valid values are listed);
-- `phase_timeout_minutes` or `verify_timeout_seconds` below 1;
+- `phase_timeout_minutes` or `verify_timeout_seconds` below 1, or `max_cost_usd` not above 0;
 - a plan with no phases;
 - a phase with an empty body;
 - duplicate phase titles (reported at the second one, with the first one's line);

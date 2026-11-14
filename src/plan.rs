@@ -103,13 +103,15 @@ fn plan_value(key: &str, value: &str) -> Result<String, String> {
 }
 
 /// Settings from the TOML front matter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlanConfig {
     pub agent: AgentKind,
     pub verify: Vec<String>,
     pub max_retries: u32,
     pub phase_timeout_minutes: u64,
     pub verify_timeout_seconds: u64,
+    /// Spending limit for the whole run, in US dollars (agents that report cost).
+    pub max_cost_usd: Option<f64>,
     pub agent_args: Vec<String>,
     /// Model for every phase (applies only when the run uses the plan's agent).
     pub model: Option<String>,
@@ -124,6 +126,7 @@ impl Default for PlanConfig {
             max_retries: 1,
             phase_timeout_minutes: 60,
             verify_timeout_seconds: 600,
+            max_cost_usd: None,
             agent_args: Vec::new(),
             model: None,
             effort: None,
@@ -146,7 +149,7 @@ pub struct Phase {
     pub line: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub config: PlanConfig,
     pub title: Option<String>,
@@ -178,6 +181,7 @@ struct RawConfig {
     max_retries: Option<u32>,
     phase_timeout_minutes: Option<u64>,
     verify_timeout_seconds: Option<u64>,
+    max_cost_usd: Option<f64>,
     agent_args: Option<Vec<String>>,
     model: Option<String>,
     effort: Option<String>,
@@ -345,6 +349,15 @@ fn parse_front_matter(
             ));
         }
         config.verify_timeout_seconds = v;
+    }
+    if let Some(v) = raw.max_cost_usd {
+        if !v.is_finite() || v <= 0.0 {
+            errors.push(err(
+                key_line(text, 2, fm_lines, "max_cost_usd"),
+                "`max_cost_usd` must be greater than 0",
+            ));
+        }
+        config.max_cost_usd = Some(v);
     }
     if let Some(v) = raw.agent_args {
         config.agent_args = v;
@@ -792,6 +805,7 @@ mod tests {
         assert_eq!(plan.config.max_retries, 1);
         assert_eq!(plan.config.phase_timeout_minutes, 60);
         assert_eq!(plan.config.verify_timeout_seconds, 600);
+        assert_eq!(plan.config.max_cost_usd, None);
         assert_eq!(plan.title, None);
         assert_eq!(plan.phases.len(), 1);
     }
@@ -867,6 +881,19 @@ mod tests {
         let e =
             errs("+++\nphase_timeout_minutes = 0\nverify_timeout_seconds = 0\n+++\n## A\n\nbody\n");
         assert_eq!(e.iter().map(|x| x.0).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    #[test]
+    fn the_spending_limit_is_a_positive_amount() {
+        let plan = ok("+++\nmax_cost_usd = 1.5\n+++\n## A\n\nbody\n");
+        assert_eq!(plan.config.max_cost_usd, Some(1.5));
+        let plan = ok("+++\nmax_cost_usd = 2\n+++\n## A\n\nbody\n");
+        assert_eq!(plan.config.max_cost_usd, Some(2.0));
+        for bad in ["0", "-1.0"] {
+            let e = errs(&format!("+++\nmax_cost_usd = {bad}\n+++\n## A\n\nbody\n"));
+            assert_eq!(e.len(), 1, "{bad}");
+            assert!(e[0].1.contains("max_cost_usd"), "{}", e[0].1);
+        }
     }
 
     #[test]

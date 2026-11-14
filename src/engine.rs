@@ -82,6 +82,8 @@ pub struct PhaseSettings {
     pub max_retries: u32,
     pub phase_timeout: Duration,
     pub verify_timeout: Duration,
+    /// Spending limit for the whole run, in US dollars.
+    pub max_cost_usd: Option<f64>,
     /// Grace period between `TERM` and `KILL` when stopping the agent.
     pub kill_grace: Duration,
     pub agent_args: Vec<String>,
@@ -316,6 +318,18 @@ pub fn run_phase(
                 ctx.paths.verify_log(phase).display()
             );
             return ctx.fail(phase, FailureKind::VerifyFailed, detail);
+        }
+        if let Some(limit) = ctx.settings.max_cost_usd {
+            let spent = ctx.state.cost_usd();
+            if spent >= limit {
+                let detail = format!(
+                    "`{}` failed ({what}). Not retrying: the run has spent ${spent:.2} of its \
+${limit:.2} limit. Output: {}",
+                    failed.command,
+                    ctx.paths.verify_log(phase).display()
+                );
+                return ctx.fail(phase, FailureKind::VerifyFailed, detail);
+            }
         }
         retries_used += 1;
         ctx.emit(EngineEvent::Retrying {
