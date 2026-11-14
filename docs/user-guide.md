@@ -258,7 +258,7 @@ terminal UI.
 | `phasewise doctor` | Checks git, the agents and the repository. |
 | `phasewise run [PLAN]` | Starts a run and runs phase 1. `--agent`, `--model`, `--effort`, `--auto`. |
 | `phasewise next` | Approves the phase awaiting review and runs the next one. `--auto`, `--model`, `--effort`. |
-| `phasewise retry` | Runs the current phase again from its starting checkpoint. `--note`, `--model`, `--effort`. |
+| `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
 | `phasewise status` | Table of phases: state, attempts, files, cost, model. |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
@@ -306,8 +306,9 @@ Environment variables:
 - **"The working tree has uncommitted changes"**: commit or stash them; a run
   must start from a clean tree. On the home screen, `c` commits the plan file.
 - **A phase failed**: read the Log and Verify views, then `r` to retry with a
-  note, or fix things yourself and retry. `phasewise status` shows the full
-  failure message.
+  note. `phasewise status` shows the full failure message. A retry starts again
+  from the checkpoint before the phase and discards everything uncommitted,
+  including edits you made by hand, so put a fix you want to keep in the note.
 - **"another git process is using the repository"**: an editor or another
   terminal is running git. phasewise waits a few seconds; if the lock stays,
   close that tool, or delete `.git/index.lock` if no git command is running,
