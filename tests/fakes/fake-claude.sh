@@ -10,6 +10,13 @@ if [ "$1" = "--version" ]; then
     exit 0
 fi
 
+# `claude auth status`: succeeds, or exits 1 when FAKE_LOGIN=out.
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+    [ "${FAKE_LOGIN:-in}" = "out" ] && exit 1
+    echo '{"loggedIn": true}'
+    exit 0
+fi
+
 
 # Planning session (read-only flags in argv). FAKE_PLAN_MODE: valid (default),
 # invalid_then_valid (duplicate title; valid after a resume), wrong_agent_then_valid,

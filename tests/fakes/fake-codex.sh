@@ -9,6 +9,13 @@ if [ "$1" = "--version" ]; then
     exit 0
 fi
 
+# `codex login status`: succeeds, or exits 1 when FAKE_LOGIN=out.
+if [ "$1" = "login" ] && [ "$2" = "status" ]; then
+    [ "${FAKE_LOGIN:-in}" = "out" ] && exit 1
+    echo "Logged in using ChatGPT"
+    exit 0
+fi
+
 # `codex debug models`: prints the synthetic catalog. FAKE_MODELS_MODE: ok (default),
 # fail (exit 1 with a message on stderr), invalid (prints text that is not JSON).
 if [ "$1" = "debug" ] && [ "$2" = "models" ]; then

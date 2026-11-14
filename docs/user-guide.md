@@ -22,9 +22,10 @@ With [Rust](https://rustup.rs) 1.88 or later, from a clone of the repository:
 cargo install --path .
 ```
 
-Then run `phasewise doctor` inside your project. It checks git, both agents and
-whether the repository is ready (a first commit, a branch checked out, a clean
-working tree).
+Then run `phasewise doctor` inside your project. It checks git, both agents
+(installed, version and whether they are logged in) and whether the repository
+is ready (a first commit, a branch checked out, a clean working tree). A login
+that is not confirmed is a warning, not an error.
 
 ## How it works
 

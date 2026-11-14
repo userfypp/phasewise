@@ -45,9 +45,8 @@ pub fn run(cwd: &Path) -> Report {
         (AgentKind::Claude, "claude", "PHASEWISE_CLAUDE_BIN"),
         (AgentKind::Codex, "codex", "PHASEWISE_CODEX_BIN"),
     ] {
-        let (line, found) = agent_line(agent_for(kind).as_ref(), name, var);
+        let found = agent_lines(agent_for(kind).as_ref(), name, var, &mut lines);
         agents_found += usize::from(found);
-        lines.push(line);
     }
 
     lines.push(String::new());
@@ -71,6 +70,21 @@ pub fn run(cwd: &Path) -> Report {
         .to_string(),
     );
     Report { lines, ok }
+}
+
+/// Pushes the lines of one agent and returns whether it was found. A login that
+/// is not confirmed is a warning, not a failure: an API key or a cloud
+/// provider can work without it.
+fn agent_lines(agent: &dyn Agent, name: &str, var: &str, lines: &mut Vec<String>) -> bool {
+    let (line, found) = agent_line(agent, name, var);
+    lines.push(line);
+    if found && agent.logged_in() == Some(false) {
+        lines.push(format!(
+            "    ! login not confirmed: run `{}` (ignore this if you sign in with an API key or a cloud provider)",
+            agent.login_hint()
+        ));
+    }
+    found
 }
 
 fn agent_line(agent: &dyn Agent, name: &str, var: &str) -> (String, bool) {

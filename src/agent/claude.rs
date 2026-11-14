@@ -9,8 +9,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{
-    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, program_from_env, program_version,
-    tidy_detail,
+    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, program_from_env, program_logged_in,
+    program_version, tidy_detail,
 };
 use crate::plan::{self, AgentKind};
 
@@ -87,6 +87,14 @@ impl Agent for ClaudeAgent {
             &self.program(),
             "`claude` was not found. Install Claude Code or set PHASEWISE_CLAUDE_BIN.",
         )
+    }
+
+    fn logged_in(&self) -> Option<bool> {
+        program_logged_in(&self.program(), &["auth", "status"])
+    }
+
+    fn login_hint(&self) -> &'static str {
+        "claude auth login"
     }
 
     fn new_session_command(

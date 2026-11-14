@@ -96,3 +96,40 @@ fn doctor_writes_nothing() {
         before
     );
 }
+
+#[test]
+fn a_login_that_is_not_confirmed_is_a_warning() {
+    let repo = TestRepo::new();
+    repo.phasewise()
+        .arg("doctor")
+        .env("PHASEWISE_CLAUDE_BIN", FAKE_CLAUDE)
+        .env("PHASEWISE_CODEX_BIN", FAKE_CODEX)
+        .env("FAKE_LOGIN", "out")
+        .assert()
+        .stdout(predicate::str::contains(
+            "! login not confirmed: run `claude auth login`",
+        ))
+        .stdout(predicate::str::contains(
+            "! login not confirmed: run `codex login`",
+        ));
+    // Logged in: no warning.
+    doctor(&repo, FAKE_CLAUDE, FAKE_CODEX)
+        .stdout(predicate::str::contains("login not confirmed").not());
+}
+
+#[test]
+fn a_missing_login_does_not_make_doctor_fail() {
+    let repo = TestRepo::new();
+    repo.write(
+        "phasewise.md",
+        include_str!("../src/templates/phasewise.md"),
+    );
+    repo.commit_all("add plan");
+    repo.phasewise()
+        .arg("doctor")
+        .env("PHASEWISE_CLAUDE_BIN", FAKE_CLAUDE)
+        .env("PHASEWISE_CODEX_BIN", MISSING)
+        .env("FAKE_LOGIN", "out")
+        .assert()
+        .success();
+}

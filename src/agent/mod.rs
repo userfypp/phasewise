@@ -83,6 +83,13 @@ pub trait Agent: Send + Sync {
     fn program(&self) -> OsString;
     /// First non-empty line of `<program> --version`.
     fn version(&self) -> Result<String>;
+    /// Whether the agent says it is logged in, from its own status command
+    /// (no model call): `Some(true)` when the command succeeds, `Some(false)`
+    /// when it fails or does not answer in time, `None` when the program
+    /// cannot be started.
+    fn logged_in(&self) -> Option<bool>;
+    /// The command that signs in, for the hint when `logged_in` is not true.
+    fn login_hint(&self) -> &'static str;
     /// The prompt goes to stdin; stdio is configured by the caller.
     fn new_session_command(
         &self,
@@ -153,6 +160,15 @@ fn program_version(program: &OsString, not_found: &str) -> Result<String> {
                 output.status
             )
         })
+}
+
+/// Runs a status command such as `claude auth status`. See `Agent::logged_in`.
+fn program_logged_in(program: &OsString, args: &[&str]) -> Option<bool> {
+    match run_listing(program, args, "not found") {
+        Ok(_) => Some(true),
+        Err(e) if e.to_string() == "not found" => None,
+        Err(_) => Some(false),
+    }
 }
 
 /// Runs `program args` (stdin null, no terminal) in its own process group and

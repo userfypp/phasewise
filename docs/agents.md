@@ -92,6 +92,15 @@ first answer has no valid plan.
 Everything else is ignored. Real runs also emitted `rate_limit_event` and
 `system`/`thinking_tokens`.
 
+### Login
+
+`phasewise doctor` runs `claude auth status` and `codex login status`, with a
+10-second timeout and no model call. Exit status 0 means logged in; anything
+else shows a warning with the command that signs in. Claude Code documents exit
+status 1 for "not logged in"; Codex documents only 0 for "logged in". The
+warning never makes `doctor` fail, because an API key or a cloud provider can
+work without a login.
+
 ### Models and effort
 
 - `--model` takes an alias or a full model name. phasewise offers the full

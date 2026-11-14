@@ -9,8 +9,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{
-    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, program_from_env, program_version,
-    run_listing, tidy_detail,
+    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, program_from_env, program_logged_in,
+    program_version, run_listing, tidy_detail,
 };
 use crate::plan::AgentKind;
 
@@ -106,6 +106,14 @@ impl Agent for CodexAgent {
             &self.program(),
             "`codex` was not found. Install Codex or set PHASEWISE_CODEX_BIN.",
         )
+    }
+
+    fn logged_in(&self) -> Option<bool> {
+        program_logged_in(&self.program(), &["login", "status"])
+    }
+
+    fn login_hint(&self) -> &'static str {
+        "codex login"
     }
 
     fn new_session_command(
