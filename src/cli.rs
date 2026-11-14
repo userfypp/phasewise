@@ -18,7 +18,7 @@ use crate::display::{
     event_line, failure_kind_label, model_name, money, path_in, phase_count, phase_header,
     phase_summary, plan_event_line, plan_header, status_label,
 };
-use crate::engine::EngineEvent;
+use crate::engine::{self, EngineEvent};
 use crate::git::Git;
 use crate::ops::{self, NextOutcome, Overrides, PlanEvent, PlanRequest, PlanResult, Run};
 use crate::plan::{self, AgentKind};
@@ -400,10 +400,15 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
             "  {}",
             st.heading(&format!("{}. {}", phase.number, phase.title))
         );
-        let settings: Vec<String> = [("model", &phase.model), ("effort", &phase.effort)]
-            .into_iter()
-            .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
-            .collect();
+        let agent = phase.agent.map(|a| a.to_string());
+        let settings: Vec<String> = [
+            ("agent", &agent),
+            ("model", &phase.model),
+            ("effort", &phase.effort),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
+        .collect();
         if !settings.is_empty() {
             outln!("     {}", st.dim(&settings.join(" · ")));
         }
@@ -943,7 +948,6 @@ where
 {
     let cancel = process::install_signal_handler(Some(INTERRUPT_NOTICE))?;
     let verify_secs = ops::settings(&run)?.verify_timeout.as_secs();
-    let run_agent_name = run.state.agent.to_string();
     let (tx, rx) = mpsc::channel();
     let worker = thread::spawn(move || {
         let mut run = run;
@@ -952,11 +956,10 @@ where
     });
     let started = Instant::now();
     let st = Styler::for_stdout();
-    let agent = run_agent_name;
     for event in rx {
         // A closed stdout (for example `| head`) must not abort the run, so
         // write errors are ignored by `outln!`.
-        if let Some(header) = phase_header(&event, &agent, &st) {
+        if let Some(header) = phase_header(&event, &st) {
             outln!();
             outln!("{header}");
         } else if let Some(line) = event_line(&event, verify_secs) {
@@ -1072,6 +1075,7 @@ fn status_json(run: &Run) -> Result<String> {
                 "status": p.status,
                 "attempts": p.attempts,
                 "cost_usd": p.cost_usd,
+                "agent": engine::phase_agent(state, &run.plan, p.number).to_string(),
                 "model": p.agent_model.as_ref().or(p.model.as_ref()),
                 "effort": p.effort,
                 "checkpoint_sha": p.checkpoint_sha,
@@ -1123,7 +1127,18 @@ fn status(json: bool) -> Result<ExitCode> {
         "Plan:   {}",
         state.plan_title.as_deref().unwrap_or("(untitled)")
     );
-    outln!("Agent:  {}", state.agent);
+    let other_agents: Vec<String> = state
+        .phases
+        .iter()
+        .map(|p| (p.number, engine::phase_agent(state, &run.plan, p.number)))
+        .filter(|(_, agent)| *agent != state.agent)
+        .map(|(number, agent)| format!("phase {number}: {agent}"))
+        .collect();
+    if other_agents.is_empty() {
+        outln!("Agent:  {}", state.agent);
+    } else {
+        outln!("Agent:  {} ({})", state.agent, other_agents.join(", "));
+    }
     outln!(
         "Branch: {} (from {})",
         state.run_branch,
@@ -1158,10 +1173,10 @@ fn status(json: bool) -> Result<ExitCode> {
                 p.attempts.to_string(),
                 files,
                 cost,
-                p.agent_model
-                    .as_ref()
-                    .or(p.model.as_ref())
-                    .map_or_else(|| "-".to_string(), |m| model_name(state.agent, m)),
+                p.agent_model.as_ref().or(p.model.as_ref()).map_or_else(
+                    || "-".to_string(),
+                    |m| model_name(engine::phase_agent(state, &run.plan, p.number), m),
+                ),
             ]
         })
         .collect();

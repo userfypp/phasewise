@@ -35,7 +35,8 @@ fake agents. Re-check this page whenever you upgrade either CLI
 - **Model and effort** are passed only when set (in the plan, a phase or the
   run). `default` means no flag, so the agent uses its own default.
 - **`agent_args`** from the plan's front matter go last, as given, on phase
-  sessions only. Planning sessions run before there is a plan, so they take
+  sessions of the run's agent only: a phase that a `phasewise` block gives to
+  the other agent gets none. Planning sessions run before there is a plan, so they take
   none.
 
 ## Claude Code

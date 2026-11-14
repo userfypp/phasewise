@@ -145,6 +145,8 @@ pub struct Phase {
     /// From the phase's `phasewise` settings block.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// Agent for this phase only, from the settings block.
+    pub agent: Option<AgentKind>,
     /// Line of the phase heading.
     pub line: usize,
 }
@@ -190,6 +192,7 @@ struct RawConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPhaseSettings {
+    agent: Option<String>,
     model: Option<String>,
     effort: Option<String>,
 }
@@ -634,8 +637,7 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         let mut body = String::new();
         let mut cursor = heading.range.end;
         let mut verify = Vec::new();
-        let mut model = None;
-        let mut effort = None;
+        let mut settings = PhaseSettings::default();
         // Blocks to cut out of the body, in file order.
         enum Cut<'a> {
             Verify(&'a [String]),
@@ -673,7 +675,7 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
                 Cut::Settings(content) => {
                     let line = line_of(text, range.start);
                     match parse_phase_settings(content, line) {
-                        Ok((m, e)) => (model, effort) = (m, e),
+                        Ok(s) => settings = s,
                         Err(mut es) => errors.append(&mut es),
                     }
                 }
@@ -685,8 +687,9 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
             title: heading.title.clone(),
             body: body.trim().to_string(),
             verify,
-            model,
-            effort,
+            model: settings.model,
+            effort: settings.effort,
+            agent: settings.agent,
             line: line_of(text, heading.range.start),
         });
     }
@@ -730,11 +733,16 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
     }
 }
 
+/// Settings read from a phase's `phasewise` block.
+#[derive(Default)]
+struct PhaseSettings {
+    agent: Option<AgentKind>,
+    model: Option<String>,
+    effort: Option<String>,
+}
+
 /// Parses the TOML of a `phasewise` block whose fence is at `fence_line`.
-fn parse_phase_settings(
-    content: &str,
-    fence_line: usize,
-) -> Result<(Option<String>, Option<String>), Vec<PlanError>> {
+fn parse_phase_settings(content: &str, fence_line: usize) -> Result<PhaseSettings, Vec<PlanError>> {
     let raw: RawPhaseSettings = match toml::from_str(content) {
         Ok(raw) => raw,
         Err(e) => {
@@ -750,6 +758,16 @@ fn parse_phase_settings(
         }
     };
     let mut errors = Vec::new();
+    let mut agent = None;
+    if let Some(value) = raw.agent {
+        match value.parse() {
+            Ok(a) => agent = Some(a),
+            Err(m) => {
+                let line = key_line(content, 1, content.lines().count(), "agent");
+                errors.push(err(fence_line + line, m));
+            }
+        }
+    }
     let mut out = [None, None];
     for (i, (key, value)) in [("model", raw.model), ("effort", raw.effort)]
         .into_iter()
@@ -767,7 +785,11 @@ fn parse_phase_settings(
     }
     if errors.is_empty() {
         let [model, effort] = out;
-        Ok((model, effort))
+        Ok(PhaseSettings {
+            agent,
+            model,
+            effort,
+        })
     } else {
         Err(errors)
     }
@@ -808,6 +830,23 @@ mod tests {
         assert_eq!(plan.config.max_cost_usd, None);
         assert_eq!(plan.title, None);
         assert_eq!(plan.phases.len(), 1);
+    }
+
+    #[test]
+    fn phase_block_sets_agent() {
+        let plan =
+            ok("## A\n\nx\n\n```phasewise\nagent = \"codex\"\nmodel = \"m\"\n```\n\n## B\n\ny\n");
+        assert_eq!(plan.phases[0].agent, Some(AgentKind::Codex));
+        assert_eq!(plan.phases[0].model.as_deref(), Some("m"));
+        assert_eq!(plan.phases[1].agent, None);
+    }
+
+    #[test]
+    fn phase_block_bad_agent_reports_line() {
+        let es = errs("## A\n\nx\n\n```phasewise\nmodel = \"m\"\nagent = \"gpt\"\n```\n");
+        assert_eq!(es.len(), 1);
+        assert_eq!(es[0].0, 7);
+        assert!(es[0].1.contains("unknown agent `gpt`"), "{}", es[0].1);
     }
 
     #[test]

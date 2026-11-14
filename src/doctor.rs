@@ -41,29 +41,36 @@ pub fn run(cwd: &Path) -> Report {
         }
     };
     let mut agents_found = 0;
+    let mut found_kinds = Vec::new();
     for (kind, name, var) in [
         (AgentKind::Claude, "claude", "PHASEWISE_CLAUDE_BIN"),
         (AgentKind::Codex, "codex", "PHASEWISE_CODEX_BIN"),
     ] {
         let found = agent_lines(agent_for(kind).as_ref(), name, var, &mut lines);
         agents_found += usize::from(found);
+        if found {
+            found_kinds.push(kind);
+        }
     }
 
     lines.push(String::new());
     lines.push("Repository".to_string());
+    let mut plan_agents_ok = true;
     if git_ok {
-        repository_lines(cwd, &mut lines);
+        plan_agents_ok = repository_lines(cwd, &found_kinds, &mut lines);
     } else {
         lines.push("  ✗ cannot check the repository without git".to_string());
     }
 
-    let ok = git_ok && agents_found > 0;
+    let ok = git_ok && agents_found > 0 && plan_agents_ok;
     lines.push(String::new());
     lines.push(
         if !git_ok {
             "Not ready: git is missing. Install git and make sure it is on your PATH."
         } else if agents_found == 0 {
             "Not ready: neither claude nor codex was found. Install one of them or set PHASEWISE_CLAUDE_BIN / PHASEWISE_CODEX_BIN."
+        } else if !plan_agents_ok {
+            "Not ready: the plan needs an agent that was not found. Install it or set its PHASEWISE_*_BIN variable."
         } else {
             "Tools are ready. Fix any ✗ in the repository section before `phasewise run`."
         }
@@ -121,14 +128,17 @@ fn resolve_program(program: &OsStr) -> Option<PathBuf> {
         })
 }
 
-fn repository_lines(cwd: &Path, lines: &mut Vec<String>) {
+/// Pushes the repository lines. Returns false when the plan has a phase whose
+/// agent (other than the plan's own, which is the run's default) was not found.
+fn repository_lines(cwd: &Path, found: &[AgentKind], lines: &mut Vec<String>) -> bool {
+    let mut plan_agents_ok = true;
     let git = match Git::discover(cwd) {
         Ok(git) => git,
         Err(_) => {
             lines.push(
                 "  ✗ not inside a git repository; run `git init` (then commit) here".to_string(),
             );
-            return;
+            return true;
         }
     };
     lines.push(format!("  ✓ git repository at {}", tilde(git.root())));
@@ -176,10 +186,31 @@ fn repository_lines(cwd: &Path, lines: &mut Vec<String>) {
         ));
     } else {
         match plan::load(&plan_path) {
-            Ok(plan) => lines.push(format!(
-                "  ✓ {PLAN_FILE} is valid ({})",
-                crate::display::phase_count(plan.phases.len())
-            )),
+            Ok(plan) => {
+                lines.push(format!(
+                    "  ✓ {PLAN_FILE} is valid ({})",
+                    crate::display::phase_count(plan.phases.len())
+                ));
+                for kind in [AgentKind::Claude, AgentKind::Codex] {
+                    let phases: Vec<String> = plan
+                        .phases
+                        .iter()
+                        .filter(|p| p.agent.is_some_and(|a| a == kind))
+                        .map(|p| p.number.to_string())
+                        .collect();
+                    if !phases.is_empty() && !found.contains(&kind) {
+                        plan_agents_ok = false;
+                        let var = match kind {
+                            AgentKind::Claude => "PHASEWISE_CLAUDE_BIN",
+                            AgentKind::Codex => "PHASEWISE_CODEX_BIN",
+                        };
+                        lines.push(format!(
+                            "  ✗ phase(s) {} use {kind}, which was not found; install it or set {var}",
+                            phases.join(", ")
+                        ));
+                    }
+                }
+            }
             Err(err) => {
                 let message = err.to_string();
                 let first = message.lines().next().unwrap_or("invalid plan");
@@ -188,6 +219,7 @@ fn repository_lines(cwd: &Path, lines: &mut Vec<String>) {
         }
     }
     lines.push(latest_run_line(&git));
+    plan_agents_ok
 }
 
 /// Read-only: never saves a crash recovery.

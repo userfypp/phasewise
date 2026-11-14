@@ -11,7 +11,8 @@ use jiff::Timestamp;
 
 use crate::agent::{AgentEvent, LaunchOptions, agent_for};
 use crate::engine::{
-    AgentSession, EngineEvent, PhaseContext, PhaseSettings, run_agent_session, run_phase,
+    AgentSession, EngineEvent, PhaseContext, PhaseSettings, phase_agent, run_agent_session,
+    run_phase,
 };
 use crate::git::{Git, SquashResult};
 use crate::plan::{self, AgentKind, Plan};
@@ -487,6 +488,19 @@ fn recovered_phases(old: &RunState, new: &RunState) -> Vec<usize> {
         .collect()
 }
 
+/// Refuses `--model` for a phase that runs with an agent other than the run's:
+/// a model name belongs to one agent. Nothing is stored.
+fn check_model_override(run: &Run, overrides: &Overrides, number: usize) -> Result<()> {
+    let agent = phase_agent(&run.state, &run.plan, number);
+    if matches!(overrides.model, Some(Override::Set(_))) && agent != run.state.agent {
+        bail!(
+            "Phase {number} runs with {agent}; --model applies only to the run's agent ({}) phases. Run without --model.",
+            run.state.agent
+        );
+    }
+    Ok(())
+}
+
 /// Approves the phase awaiting review (if any) and runs the next pending one.
 /// Holds the run lock for the whole operation.
 pub fn next(
@@ -498,6 +512,15 @@ pub fn next(
 ) -> Result<NextOutcome> {
     let _lock = lock_and_reload(run)?;
     check_can_advance(run)?;
+    if let Some(pending) = run
+        .state
+        .phases
+        .iter()
+        .find(|p| p.status == PhaseStatus::Pending)
+        .map(|p| p.number)
+    {
+        check_model_override(run, overrides, pending)?;
+    }
     overrides.apply(&mut run.state);
     // Only needed when a phase will run (completing the run commits nothing).
     // Checked before approving, so a missing identity or an exhausted budget
@@ -649,6 +672,7 @@ then `phasewise rollback 0` to start over.",
             )
         })?;
     // Before discarding anything: a refused retry must leave the work as it is.
+    check_model_override(run, overrides, number)?;
     check_budget(run, &settings(run)?, number)?;
     run.git.reset_hard(&previous)?;
     run.git.clean_untracked()?;
@@ -871,7 +895,7 @@ fn run_one(
     events: &Sender<EngineEvent>,
     cancel: &AtomicBool,
 ) -> Result<PhaseStatus> {
-    let agent = agent_for(run.state.agent);
+    let agent = agent_for(phase_agent(&run.state, &run.plan, number));
     let settings = settings(run)?;
     check_budget(run, &settings, number)?;
     let mut ctx = PhaseContext {
@@ -1271,7 +1295,23 @@ fn check_plan_answer(
     // closing fence does, so the wrapped text can parse as a shorter plan.
     let text = prompt::unwrap_fence(&text).unwrap_or(text);
     match plan::parse(&text) {
-        Ok(plan) if plan.config.agent == agent => Ok((text, plan)),
+        Ok(plan) if plan.config.agent == agent => {
+            match plan
+                .phases
+                .iter()
+                .find(|p| p.agent.is_some_and(|a| a != agent))
+            {
+                Some(phase) => Err((
+                    Some(text),
+                    vec![format!(
+                        "phase {} sets agent = \"{}\"; leave `agent` out of phase blocks",
+                        phase.number,
+                        phase.agent.map_or_else(String::new, |a| a.to_string())
+                    )],
+                )),
+                None => Ok((text, plan)),
+            }
+        }
         Ok(plan) => Err((
             Some(text),
             vec![format!(
@@ -1331,5 +1371,25 @@ mod tests {
             .apply(&mut state);
         assert_eq!(state.model_override.as_deref(), Some("m"));
         assert_eq!(state.effort_override, None);
+    }
+
+    #[test]
+    fn a_draft_with_a_phase_agent_of_the_other_agent_is_sent_back() {
+        let answer = |agent: &str| crate::engine::AgentRun {
+            exit_code: Some(0),
+            final_text: Some(format!(
+                "{}\n+++\nagent = \"claude\"\n+++\n\n## A\n\nx\n\n```phasewise\nagent = \"{agent}\"\n```\n{}",
+                prompt::PLAN_START,
+                prompt::PLAN_END
+            )),
+            ..Default::default()
+        };
+        assert!(check_plan_answer(&answer("claude"), AgentKind::Claude).is_ok());
+        let (_, problems) =
+            check_plan_answer(&answer("codex"), AgentKind::Claude).expect_err("rejected");
+        assert_eq!(
+            problems,
+            ["phase 1 sets agent = \"codex\"; leave `agent` out of phase blocks"]
+        );
     }
 }

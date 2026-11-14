@@ -194,6 +194,7 @@ fn meta_line(app: &App, p: &PhaseView, width: usize) -> Line<'static> {
             ));
         }
         parts.extend(p.cost_usd.map(money));
+        parts.extend(p.agent.map(|a| a.to_string()));
         parts.extend(p.model.clone());
     }
     // Whole parts are dropped from the end rather than cut.
@@ -492,6 +493,7 @@ pub(super) mod tests {
 
     pub(in crate::tui) fn app() -> App {
         let phase = |number, title: &str, status, checkpoint| PhaseView {
+            agent: None,
             number,
             title: title.to_string(),
             status,

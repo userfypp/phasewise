@@ -190,6 +190,11 @@ fn run_card(home: &Home, run: &RunSummary, width: usize) -> Vec<Line<'static>> {
                 pad_to(&title, title_width)
             )),
         ];
+        let state = match phase.agent {
+            Some(agent) if state.is_empty() => agent.to_string(),
+            Some(agent) => format!("{state} · {agent}"),
+            None => state,
+        };
         if !state.is_empty() {
             spans.push(Span::styled(format!("   {state}"), dim()));
         }
@@ -329,7 +334,9 @@ fn phase_meta(home: &Home, plan: &PlanSummary, phase: &HomePhase) -> String {
     };
     let mut parts = vec![checks];
     if home.agent == plan.agent {
-        parts.extend(phase.model.as_deref().map(|m| model_name(plan.agent, m)));
+        let agent = phase.agent.unwrap_or(plan.agent);
+        parts.extend(phase.agent.map(|a| a.to_string()));
+        parts.extend(phase.model.as_deref().map(|m| model_name(agent, m)));
         parts.extend(phase.effort.clone());
     }
     parts.join(" · ")
@@ -640,6 +647,7 @@ pub(super) mod tests {
 
     pub(in crate::tui) fn valid_plan() -> PlanState {
         let phase = |number, title: &str, checks, model: Option<&str>| HomePhase {
+            agent: None,
             number,
             title: title.into(),
             checks,
@@ -726,6 +734,7 @@ pub(super) mod tests {
 
     fn run_summary(status: RunStatus) -> RunSummary {
         let phase = |number, title: &str, status| RunPhaseSummary {
+            agent: None,
             number,
             title: title.into(),
             status,
@@ -1024,6 +1033,7 @@ pub(super) mod tests {
         };
         for n in 4..=30 {
             plan.phases.push(HomePhase {
+                agent: None,
                 number: n,
                 title: format!("Phase {n}"),
                 checks: 1,

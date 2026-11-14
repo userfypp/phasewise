@@ -15,7 +15,7 @@ use jiff::Timestamp;
 
 use crate::agent::{Agent, AgentEvent, AgentParser, LaunchOptions};
 use crate::git::{Git, checkpoint_message};
-use crate::plan::Plan;
+use crate::plan::{AgentKind, Plan};
 use crate::process::{GroupChild, spawn_in_group};
 use crate::prompt;
 use crate::state::{Failure, FailureKind, PhaseStatus, RunPaths, RunState, truncate_summary};
@@ -34,6 +34,8 @@ pub enum EngineEvent {
         title: String,
         attempt: u32,
         resumed: bool,
+        /// Agent that runs this phase.
+        agent: AgentKind,
         /// Effective model and effort of this attempt, when set.
         model: Option<String>,
         effort: Option<String>,
@@ -138,30 +140,54 @@ impl PhaseContext<'_> {
     }
 }
 
+/// Agent that runs a phase: the phase block's `agent`, else the plan's. When
+/// `run --agent` switched the run to another agent, that agent runs every phase.
+pub fn phase_agent(state: &RunState, plan: &Plan, phase: usize) -> AgentKind {
+    if state.agent != plan.config.agent {
+        return state.agent;
+    }
+    plan.phases
+        .iter()
+        .find(|p| p.number == phase)
+        .and_then(|p| p.agent)
+        .unwrap_or(plan.config.agent)
+}
+
 /// Effective model and effort of a phase, highest precedence first: the run
 /// override, the phase's settings block, the plan's front matter, nothing.
-/// The plan's own values apply only when the run uses the plan's agent, because
-/// a model name belongs to one agent.
+/// A model name belongs to one agent, so each source applies only to the agent
+/// that owns it: the phase block to the phase's own agent (its `agent`, else the
+/// plan's), the front matter to the plan's agent and `model_override` to the
+/// run's agent. `effort_override` applies to every phase.
 pub fn resolve_options(state: &RunState, plan: &Plan, phase: usize) -> LaunchOptions {
-    let same_agent = state.agent == plan.config.agent;
+    let effective = phase_agent(state, plan, phase);
     let phase_settings = plan.phases.iter().find(|p| p.number == phase);
-    let pick =
-        |over: &Option<String>, in_phase: Option<&Option<String>>, in_plan: &Option<String>| {
-            over.clone().or_else(|| {
-                if !same_agent {
-                    return None;
-                }
-                in_phase.and_then(Clone::clone).or_else(|| in_plan.clone())
-            })
-        };
+    let block_applies = effective
+        == phase_settings
+            .and_then(|p| p.agent)
+            .unwrap_or(plan.config.agent);
+    let plan_applies = effective == plan.config.agent;
+    let pick = |over: Option<&String>,
+                over_applies: bool,
+                in_phase: Option<&Option<String>>,
+                in_plan: &Option<String>| {
+        over.filter(|_| over_applies).cloned().or_else(|| {
+            in_phase
+                .filter(|_| block_applies)
+                .and_then(Clone::clone)
+                .or_else(|| in_plan.clone().filter(|_| plan_applies))
+        })
+    };
     LaunchOptions {
         model: pick(
-            &state.model_override,
+            state.model_override.as_ref(),
+            effective == state.agent,
             phase_settings.map(|p| &p.model),
             &plan.config.model,
         ),
         effort: pick(
-            &state.effort_override,
+            state.effort_override.as_ref(),
+            true,
             phase_settings.map(|p| &p.effort),
             &plan.config.effort,
         ),
@@ -279,6 +305,7 @@ pub fn run_phase(
             title: title.clone(),
             attempt,
             resumed: launch.resume_session.is_some(),
+            agent: phase_agent(ctx.state, ctx.plan, phase),
             model: options.model.clone(),
             effort: options.effort.clone(),
         });
@@ -363,7 +390,7 @@ fn check_agent_run(
     attempt: u32,
     run: &AgentRun,
 ) -> Result<Option<PhaseStatus>> {
-    let agent_name = ctx.state.agent.to_string();
+    let agent_name = phase_agent(ctx.state, ctx.plan, phase).to_string();
     let stderr_log = ctx.paths.agent_stderr_log(phase, attempt);
     if let Some(error) = &run.spawn_error {
         let detail = format!("Cannot start {agent_name}: {error}");
@@ -415,7 +442,12 @@ fn run_agent(
     options: &LaunchOptions,
 ) -> Result<AgentRun> {
     let root = ctx.git.root().to_path_buf();
-    let extra = &ctx.settings.agent_args;
+    // `agent_args` are written for the run's agent; another agent's phase gets none.
+    let extra: &[String] = if phase_agent(ctx.state, ctx.plan, phase) == ctx.state.agent {
+        &ctx.settings.agent_args
+    } else {
+        &[]
+    };
     let command = match &launch.resume_session {
         Some(session) => ctx.agent.resume_command(&root, session, options, extra),
         None => ctx.agent.new_session_command(&root, options, extra),
@@ -807,5 +839,53 @@ mod tests {
         assert_eq!(resolve_options(&s, &plan, 1), opts(None, None));
         s.effort_override = Some("high".into());
         assert_eq!(resolve_options(&s, &plan, 1), opts(None, Some("high")));
+    }
+
+    const MIXED: &str = "+++\nagent = \"claude\"\nmodel = \"plan-m\"\n+++\n## A\n\nx\n\n## B\n\ny\n\n```phasewise\nagent = \"codex\"\nmodel = \"codex-m\"\neffort = \"low\"\n```\n";
+
+    #[test]
+    fn phase_block_agent_is_honoured_unless_the_run_switched_agents() {
+        let plan = plan::parse(MIXED).expect("plan");
+        let s = state(AgentKind::Claude);
+        assert_eq!(phase_agent(&s, &plan, 1), AgentKind::Claude);
+        assert_eq!(phase_agent(&s, &plan, 2), AgentKind::Codex);
+        let s = state(AgentKind::Codex);
+        assert_eq!(phase_agent(&s, &plan, 1), AgentKind::Codex);
+        assert_eq!(phase_agent(&s, &plan, 2), AgentKind::Codex);
+    }
+
+    #[test]
+    fn phase_model_belongs_to_the_phases_agent() {
+        let plan = plan::parse(MIXED).expect("plan");
+        let s = state(AgentKind::Claude);
+        assert_eq!(resolve_options(&s, &plan, 1), opts(Some("plan-m"), None));
+        // Phase 2 runs with codex: the plan's claude model does not leak in.
+        assert_eq!(
+            resolve_options(&s, &plan, 2),
+            opts(Some("codex-m"), Some("low"))
+        );
+        // Run switched to codex: the front matter model is dropped, the block stays.
+        let s = state(AgentKind::Codex);
+        assert_eq!(resolve_options(&s, &plan, 1), opts(None, None));
+        assert_eq!(
+            resolve_options(&s, &plan, 2),
+            opts(Some("codex-m"), Some("low"))
+        );
+    }
+
+    #[test]
+    fn model_override_skips_phases_of_the_other_agent_but_effort_applies_to_all() {
+        let plan = plan::parse(MIXED).expect("plan");
+        let mut s = state(AgentKind::Claude);
+        s.model_override = Some("cli-m".into());
+        s.effort_override = Some("max".into());
+        assert_eq!(
+            resolve_options(&s, &plan, 1),
+            opts(Some("cli-m"), Some("max"))
+        );
+        assert_eq!(
+            resolve_options(&s, &plan, 2),
+            opts(Some("codex-m"), Some("max"))
+        );
     }
 }

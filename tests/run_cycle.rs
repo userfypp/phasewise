@@ -572,3 +572,92 @@ fn status_and_diff_without_a_run() {
     assert_eq!(diff.code, 1);
     env.check_invariants();
 }
+
+/// Claude plan whose second phase runs with Codex.
+fn mixed_plan() -> String {
+    format!(
+        "+++\nagent = \"claude\"\nverify = [\"{VERIFY}\"]\nagent_args = [\"--claude-only-flag\"]\n+++\n\n\
+# Mixed plan\n\n## Phase 1: First\n\nDo one.\n\n## Phase 2: Second\n\nDo two.\n\n\
+```phasewise\nagent = \"codex\"\n```\n"
+    )
+}
+
+fn calls(log: &str) -> Vec<&str> {
+    log.split("=== call ===").skip(1).collect()
+}
+
+#[test]
+fn mixed_agents_run_each_phase_with_its_agent() {
+    let env = Env::with_plan(&mixed_plan());
+    let out = env.ok(&["run", "--auto"], &[]);
+    assert!(out.stdout.contains("attempt 1 · claude"), "{}", out.stdout);
+    assert!(out.stdout.contains("attempt 1 · codex"), "{}", out.stdout);
+    assert_eq!(env.statuses(), ["done", "awaiting_review"]);
+    let log = env.calls_log();
+    let calls = calls(&log);
+    assert_eq!(calls.len(), 2, "{log}");
+    assert!(calls[0].contains("--output-format"), "{}", calls[0]);
+    assert!(calls[0].contains("--claude-only-flag"), "{}", calls[0]);
+    assert!(calls[1].contains("exec --json"), "{}", calls[1]);
+    assert!(!calls[1].contains("--claude-only-flag"), "{}", calls[1]);
+
+    let json: Value =
+        serde_json::from_str(&env.ok(&["status", "--json"], &[]).stdout).expect("status json");
+    assert_eq!(json["agent"], "claude");
+    assert_eq!(json["phases"][0]["agent"], "claude");
+    assert_eq!(json["phases"][1]["agent"], "codex");
+    let status = env.ok(&["status"], &[]).stdout;
+    assert!(
+        status.contains("Agent:  claude (phase 2: codex)"),
+        "{status}"
+    );
+    env.check_invariants();
+}
+
+#[test]
+fn run_agent_switch_forces_every_phase() {
+    let env = Env::with_plan(&mixed_plan());
+    env.ok(&["run", "--agent", "codex", "--auto"], &[]);
+    let log = env.calls_log();
+    let calls = calls(&log);
+    assert_eq!(calls.len(), 2, "{log}");
+    for call in calls {
+        assert!(call.contains("exec --json"), "{call}");
+    }
+    let json: Value =
+        serde_json::from_str(&env.ok(&["status", "--json"], &[]).stdout).expect("status json");
+    assert_eq!(json["phases"][0]["agent"], "codex");
+    assert_eq!(json["phases"][1]["agent"], "codex");
+    env.check_invariants();
+}
+
+#[test]
+fn verify_retry_resumes_with_the_phase_agent() {
+    let env = Env::with_plan(&mixed_plan());
+    env.ok(&["run", "--auto"], &[("FAKE_MODE_2", "fix_on_resume")]);
+    assert_eq!(env.state()["phases"][1]["attempts"], 2);
+    let log = env.calls_log();
+    let calls = calls(&log);
+    assert_eq!(calls.len(), 3, "{log}");
+    assert!(calls[2].contains("exec --json"), "{}", calls[2]);
+    assert!(calls[2].contains("resume fake-thread-2"), "{}", calls[2]);
+    assert_eq!(env.repo.read("phase-2.txt"), "phase 2\n");
+    env.check_invariants();
+}
+
+#[test]
+fn next_model_refused_for_other_agent_phase() {
+    let env = Env::with_plan(&mixed_plan());
+    env.ok(&["run"], &[]);
+    let out = env.exec(&["next", "--model", "opus"], &[]);
+    assert_ne!(out.code, 0, "{}", out.stdout);
+    assert!(
+        out.stderr
+            .contains("Phase 2 runs with codex; --model applies only to the run's agent (claude) phases. Run without --model."),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(env.statuses(), ["awaiting_review", "pending"]);
+    assert!(env.state()["model_override"].is_null());
+    env.check_invariants();
+}

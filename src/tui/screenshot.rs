@@ -197,6 +197,7 @@ pub(super) fn buffer_to_svg(buffer: &Buffer, theme: Theme) -> String {
 
 fn four_phase_plan() -> PlanState {
     let phase = |number, title: &str, checks, model: &str| HomePhase {
+        agent: None,
         number,
         title: title.into(),
         checks,

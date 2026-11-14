@@ -960,6 +960,7 @@ mod tests {
             model: Some("opus".into()),
             effort: Some("high".into()),
             phases: vec![HomePhase {
+                agent: None,
                 number: 1,
                 title: "First".into(),
                 checks: 1,
@@ -1590,6 +1591,7 @@ mod tests {
             run_branch: "phasewise/20260101-120000".into(),
             original_branch: "main".into(),
             phases: vec![RunPhaseSummary {
+                agent: None,
                 number: 1,
                 title: "First".into(),
                 status: PhaseStatus::AwaitingReview,

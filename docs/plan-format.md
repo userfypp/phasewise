@@ -42,7 +42,9 @@ check once the run has reached the limit, and it does not start the next phase
 between agent sessions, so a session that is already running can go over the
 limit. What a discarded attempt spent (`retry`, `rollback`) stays counted;
 `retry` and `next` refuse before changing anything once the limit is reached.
-Only Claude Code reports a cost; with Codex the limit never triggers.
+Only Claude Code reports a cost; with Codex the limit never triggers. In a plan
+that gives some phases to Codex (see [Agent per phase](#agent-per-phase)), the
+limit bounds only the phases that report a cost.
 
 `PHASEWISE_MAX_COST_USD` overrides the limit for one command, for example to
 finish a run that stopped at its limit.
@@ -99,7 +101,8 @@ effort = "high"
 Refactor the parser.
 ````
 
-The block is TOML with only the keys `model` and `effort`, both optional. It is
+The block is TOML with only the keys `agent`, `model` and `effort`, all optional
+(`agent` is described in [Agent per phase](#agent-per-phase)). It is
 removed from the text the agent receives, like `verify` blocks. A phase can have
 one block, and it must come after a phase heading.
 
@@ -113,6 +116,38 @@ one block, and it must come after a phase heading.
 - The plan's values (block and front matter) apply only when the run uses the
   plan's `agent`. With `run --agent codex` on a Claude plan they are ignored,
   because a model name belongs to one agent.
+
+## Agent per phase
+
+A phase's `phasewise` block may also set `agent` (`"claude"` or `"codex"`) to run
+that phase with a different agent than the plan's:
+
+````markdown
+## Phase 2: Review the change
+
+```phasewise
+agent = "codex"
+```
+````
+
+Every phase without `agent` uses the plan's `agent`. The agent of a phase is
+derived from the plan; it is not stored in the run.
+
+- `run --agent` beats the phase blocks: when it picks an agent other than the
+  plan's, that agent runs every phase.
+- A model name belongs to one agent, so each setting applies only to its owner.
+  A phase block's `model` and `effort` apply to the phase's own agent (its
+  `agent`, else the plan's). The front matter's `model` and `effort` apply only
+  to phases run by the plan's `agent`. `agent_args` go only to phases run by the
+  run's agent.
+- `--effort` applies to every phase. `--model` applies only to phases run by the
+  run's agent: `next` and `retry` refuse it when the phase to run uses another
+  agent, and nothing is stored.
+- Codex phases report no cost, so `max_cost_usd` bounds only the phases that do.
+- A plan that sets `agent` in a phase block is rejected by older phasewise
+  versions (unknown key); remove those lines before going back to one.
+- `phasewise plan` drafts use a single agent: a draft with a phase `agent` that
+  differs from the requested one is sent back for a fix.
 
 ## What the agent receives
 
@@ -129,7 +164,7 @@ line, and exits with code 1:
 
 - front matter that is not closed (line 1);
 - unknown key (named in the message), invalid TOML or wrong value type;
-- unknown `agent` (the valid values are listed);
+- unknown `agent`, in the front matter or in a phase block (the valid values are listed);
 - `phase_timeout_minutes` or `verify_timeout_seconds` below 1, or `max_cost_usd` not above 0;
 - a plan with no phases;
 - a phase with an empty body;

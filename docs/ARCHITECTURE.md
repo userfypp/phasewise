@@ -44,7 +44,7 @@ check runs as a child process in its own process group.
 |---|---|
 | `main.rs` | Only calls `cli::main()`. |
 | `cli.rs` | clap definitions, dispatch, printing events, exit codes. |
-| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. |
+| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. `run_one` picks the agent of each phase with `engine::phase_agent`. |
 | `engine.rs` | One phase cycle (`run_phase`) and the agent-following loop shared with planning (`run_agent_session`): spawn, stdin, reader thread, logs, timeout, cancel, leftovers. |
 | `plan.rs` | The plan model and parser (`pulldown-cmark` and `toml`), validation with line numbers, model and effort values. |
 | `prompt.rs` | Every text sent to an agent, and the extraction of a plan from an answer. Pure functions. |
@@ -87,7 +87,10 @@ The run id is the UTC time plus four random hex characters:
 
 1. Build the prompt: the plan's context, the phase, one line per completed
    phase, the checks, and the reviewer's note if any.
-2. Launch the agent ([command lines](agents.md)). Every launch counts as an
+2. Launch the phase's agent ([command lines](agents.md)). The agent is chosen per
+   phase in `ops::run_one`: a phase block's `agent`, else the plan's, unless
+   `run --agent` switched the run to another one, which then runs every phase.
+   It is derived from the plan copy and the run's agent, never stored. Every launch counts as an
    attempt, and attempts are never reset, so no log is ever overwritten. The
    status is `running`. Events stream to the UI as they come. The attempt
    stops on the phase timeout (`phase_timeout_minutes`) or on cancel.

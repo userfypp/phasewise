@@ -3,7 +3,7 @@
 Ideas that are not planned yet. Nothing here is promised; an issue that makes
 the case for one is welcome.
 
-- A different agent per phase.
+- `--model` for the phases of the other agent in a plan that mixes agents.
 - Phases in parallel, using git worktrees.
 - A separate diff per subagent. Today subagent activity is only labelled in the
   log.

@@ -11,6 +11,7 @@ use crate::display::{
     EventLine, agent_event_line, failure_kind_label, failure_kind_words, first_line_short,
     model_name,
 };
+use crate::engine::phase_agent;
 use crate::git::Git;
 use crate::ops::Run;
 use crate::plan::{self, AgentKind};
@@ -53,6 +54,8 @@ pub struct PhaseView {
     /// reported, else the requested one. Effort is the requested one.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The phase's agent, when it is not the run's.
+    pub agent: Option<AgentKind>,
     /// Cost of the phase so far, when the agent reported it.
     pub cost_usd: Option<f64>,
     /// When the phase started (for the elapsed time of a running one).
@@ -87,6 +90,7 @@ pub struct RunView {
 
 pub fn load_run_view(run: &Run) -> RunView {
     let state = &run.state;
+    let agent_of = |number| phase_agent(state, &run.plan, number);
     let phases = state
         .phases
         .iter()
@@ -107,8 +111,9 @@ pub fn load_run_view(run: &Run) -> RunView {
                 .agent_model
                 .as_ref()
                 .or(p.model.as_ref())
-                .map(|m| model_name(state.agent, m)),
+                .map(|m| model_name(agent_of(p.number), m)),
             effort: p.effort.clone(),
+            agent: Some(agent_of(p.number)).filter(|a| *a != state.agent),
             cost_usd: p.cost_usd,
             started_at: p.started_at,
             failure_kind: p
@@ -207,7 +212,7 @@ pub fn load_diff(run: &Run, phase: usize) -> Result<DiffView> {
 /// resumed when its session id was already seen in an earlier attempt.
 pub fn load_log(run: &Run, phase: usize) -> Vec<LogLine> {
     let attempts = run.state.phase(phase).map_or(0, |p| p.attempts);
-    let agent = agent_for(run.state.agent);
+    let agent = agent_for(phase_agent(&run.state, &run.plan, phase));
     let mut lines = Vec::new();
     let mut seen_sessions: Vec<String> = Vec::new();
     for attempt in 1..=attempts {
@@ -260,6 +265,8 @@ pub struct HomePhase {
     /// Effective model and effort: the phase's block, else the plan's front matter.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The phase's own agent, when it is not the plan's.
+    pub agent: Option<AgentKind>,
 }
 
 /// A valid plan, summarised.
@@ -295,6 +302,8 @@ pub struct RunPhaseSummary {
     pub status: PhaseStatus,
     /// When the phase started (for the elapsed time of a running one).
     pub started_at: Option<Timestamp>,
+    /// The phase's agent, when it is not the run's.
+    pub agent: Option<AgentKind>,
 }
 
 /// The current run of the repository, of any status.
@@ -398,6 +407,8 @@ fn load_home_in(git: &Git, cwd: &Path) -> Result<HomeData> {
                     title: p.title.clone(),
                     status: p.status,
                     started_at: p.started_at,
+                    agent: Some(phase_agent(&run.state, &run.plan, p.number))
+                        .filter(|a| *a != run.state.agent),
                 })
                 .collect(),
         });
@@ -436,12 +447,24 @@ fn load_plan_state(path: &Path) -> PlanState {
             phases: plan
                 .phases
                 .iter()
-                .map(|p| HomePhase {
-                    number: p.number,
-                    title: p.title.clone(),
-                    checks: p.verify.len(),
-                    model: p.model.clone().or_else(|| plan.config.model.clone()),
-                    effort: p.effort.clone().or_else(|| plan.config.effort.clone()),
+                .map(|p| {
+                    // The plan's model belongs to the plan's agent only.
+                    let own = p.agent.filter(|a| *a != plan.config.agent);
+                    let inherit = own.is_none();
+                    HomePhase {
+                        number: p.number,
+                        title: p.title.clone(),
+                        checks: p.verify.len(),
+                        model: p
+                            .model
+                            .clone()
+                            .or_else(|| plan.config.model.clone().filter(|_| inherit)),
+                        effort: p
+                            .effort
+                            .clone()
+                            .or_else(|| plan.config.effort.clone().filter(|_| inherit)),
+                        agent: own,
+                    }
                 })
                 .collect(),
         }),

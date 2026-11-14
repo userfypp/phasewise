@@ -229,13 +229,14 @@ pub fn agent_event_line(event: &AgentEvent) -> Option<EventLine> {
 /// part (`attempt 1 · claude`), padded so it ends at column 80.
 ///
 /// The model and effort of the attempt follow the agent when they are set.
-pub fn phase_header(event: &EngineEvent, agent: &str, styler: &Styler) -> Option<String> {
+pub fn phase_header(event: &EngineEvent, styler: &Styler) -> Option<String> {
     let EngineEvent::PhaseStarted {
         phase,
         total,
         title,
         attempt,
         resumed,
+        agent,
         model,
         effort,
     } = event
@@ -618,6 +619,7 @@ mod tests {
     #[test]
     fn started_and_finished_events_are_not_lines() {
         let started = EngineEvent::PhaseStarted {
+            agent: AgentKind::Claude,
             phase: 1,
             total: 2,
             title: "T".into(),
@@ -662,24 +664,25 @@ mod tests {
     #[test]
     fn header_shows_attempt_agent_and_optional_settings() {
         let plain = Styler { color: false };
-        let started = |attempt, resumed, model: Option<&str>, effort: Option<&str>| {
+        let started = |attempt, resumed, agent, model: Option<&str>, effort: Option<&str>| {
             EngineEvent::PhaseStarted {
                 phase: 1,
                 total: 2,
                 title: "Create a file".into(),
                 attempt,
                 resumed,
+                agent,
                 model: model.map(str::to_string),
                 effort: effort.map(str::to_string),
             }
         };
-        let h = phase_header(&started(1, false, None, None), "claude", &plain).expect("header");
+        let h = phase_header(&started(1, false, AgentKind::Claude, None, None), &plain)
+            .expect("header");
         assert!(h.starts_with("▶ Phase 1/2 · Create a file  "), "{h}");
         assert!(h.ends_with("attempt 1 · claude"), "{h}");
         assert_eq!(h.chars().count(), HEADER_WIDTH);
         let h = phase_header(
-            &started(2, true, Some("opus"), Some("high")),
-            "codex",
+            &started(2, true, AgentKind::Codex, Some("opus"), Some("high")),
             &plain,
         )
         .expect("header");
@@ -694,7 +697,7 @@ mod tests {
             files: None,
             cost_usd: None,
         };
-        assert!(phase_header(&finished, "claude", &plain).is_none());
+        assert!(phase_header(&finished, &plain).is_none());
     }
 
     #[test]

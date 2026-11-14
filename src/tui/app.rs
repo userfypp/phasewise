@@ -492,6 +492,7 @@ mod tests {
 
     fn phase(number: usize, status: PhaseStatus, checkpoint: bool) -> PhaseView {
         PhaseView {
+            agent: None,
             number,
             title: format!("Phase {number}"),
             status,
