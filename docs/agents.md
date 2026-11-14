@@ -56,7 +56,7 @@ claude -p --output-format stream-json --verbose \
 | `--permission-mode acceptEdits` | File edits are accepted without asking. |
 | `--permission-prompts none` | Anything that would ask for permission is denied instead, so a phase never waits for an answer nobody will give. |
 | `--allowedTools Read,Edit,Write,Bash` | The tools a phase needs, pre-approved. |
-| `--disallowedTools "Bash(git push *)"` | The agent cannot push. |
+| `--disallowedTools "Bash(git push *)"` | A best-effort rule against `git push`. The agent has `Bash`, so this is not a guarantee; see [SECURITY.md](../SECURITY.md). |
 | `--resume <session-id>` | Only when a check failed and the phase continues in the same session. |
 
 ### Writing a plan
