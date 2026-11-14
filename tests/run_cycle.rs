@@ -387,6 +387,24 @@ fn unknown_git_identity_is_refused_up_front() {
 }
 
 #[test]
+fn next_without_a_git_identity_leaves_the_review_open() {
+    let env = Env::new();
+    assert_eq!(env.exec(&["run"], &[]).code, 0);
+    assert_eq!(env.statuses()[0], "awaiting_review");
+    env.repo.git(&["config", "--unset", "user.name"]);
+    env.repo.git(&["config", "--unset", "user.email"]);
+    env.repo.git(&["config", "user.useConfigOnly", "true"]);
+    let out = env.exec(&["next"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stderr.contains("git does not know who you are"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(env.statuses()[0], "awaiting_review");
+}
+
+#[test]
 fn dirty_tree_is_refused_without_side_effects() {
     let env = Env::new();
     env.repo.write("dirty.txt", "x\n");

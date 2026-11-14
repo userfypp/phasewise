@@ -482,6 +482,16 @@ pub fn next(
     let _lock = lock_and_reload(run)?;
     check_can_advance(run)?;
     overrides.apply(&mut run.state);
+    // Only needed when a phase will run (completing the run commits nothing).
+    // Checked before approving, so a missing identity leaves the review open.
+    if run
+        .state
+        .phases
+        .iter()
+        .any(|p| p.status == PhaseStatus::Pending)
+    {
+        run.git.check_identity()?;
+    }
     if run
         .state
         .phases
@@ -493,8 +503,6 @@ pub fn next(
             return Ok(NextOutcome::Completed);
         }
     }
-    // Only needed when a phase will run (completing the run commits nothing).
-    run.git.check_identity()?;
     execute_locked(run, auto, events, cancel).map(NextOutcome::Ran)
 }
 
