@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/userfypp/phasewise/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/userfypp/phasewise/ci.yml?label=CI&amp;labelColor=555" alt="CI status"></a>
+  <a href="https://crates.io/crates/phasewise"><img src="https://img.shields.io/crates/v/phasewise?color=0e7490&amp;labelColor=555" alt="Version on crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0e7490?labelColor=555" alt="MIT license"></a>
 </p>
 
