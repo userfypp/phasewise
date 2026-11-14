@@ -277,6 +277,27 @@ fn status_json_describes_the_run() {
 }
 
 #[test]
+fn logs_describe_a_failed_phase() {
+    let env = Env::new();
+    assert_eq!(env.exec(&["logs"], &[]).code, 1);
+    env.exec(&["run"], &[("FAKE_MODE", "never_fixes")]);
+    let out = env.ok(&["logs"], &[]);
+    assert!(
+        out.stdout.contains("Phase 1 · First (failed, 2 attempts)"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("Failure:"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("phase-01.attempt-2.jsonl"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("phase-01.verify.log"), "{}", out.stdout);
+    assert_eq!(env.exec(&["logs", "9"], &[]).code, 1);
+}
+
+#[test]
 fn the_environment_raises_the_spending_limit() {
     let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
     env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);

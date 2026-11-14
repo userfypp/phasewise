@@ -23,7 +23,7 @@ use crate::git::Git;
 use crate::ops::{self, NextOutcome, Overrides, PlanEvent, PlanRequest, PlanResult, Run};
 use crate::plan::{self, AgentKind};
 use crate::process;
-use crate::state::{PhaseStatus, RunStatus};
+use crate::state::{PhaseStatus, RunState, RunStatus};
 use crate::style::{Role, Styler};
 
 // Output to stdout goes through these macros instead of `println!`/`print!`,
@@ -203,6 +203,13 @@ pub enum Command {
         n: Option<u32>,
     },
 
+    /// Print what happened in phase N: its result, the agent's summary and where the logs are
+    #[command(after_help = "Examples:\n  phasewise logs\n  phasewise logs 2")]
+    Logs {
+        /// Phase number (default: the last phase that started)
+        n: Option<u32>,
+    },
+
     /// Open the review TUI
     #[command(after_help = "Examples:\n  phasewise review")]
     Review,
@@ -302,6 +309,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Merge { yes }) => merge_command(yes),
         Some(Command::Status { json }) => status(json),
         Some(Command::Diff { n }) => diff(n),
+        Some(Command::Logs { n }) => logs(n),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
         Some(Command::Abort) => abort_command(),
     }
@@ -1246,20 +1254,76 @@ fn next_step_hint(run: &Run) -> String {
     }
 }
 
+/// `n` as a phase number of the run, or an error that says which exist.
+fn existing_phase(state: &RunState, n: u32) -> Result<usize> {
+    let n = n as usize;
+    if n == 0 || n > state.phases.len() {
+        return Err(anyhow!(
+            "Phase {n} does not exist; this run has phases 1 to {}. Run `phasewise status`.",
+            state.phases.len()
+        ));
+    }
+    Ok(n)
+}
+
+fn logs(n: Option<u32>) -> Result<ExitCode> {
+    let run = load_run()?;
+    let state = &run.state;
+    let number = match n {
+        Some(n) => existing_phase(state, n)?,
+        None => state
+            .phases
+            .iter()
+            .rev()
+            .find(|p| p.status != PhaseStatus::Pending)
+            .map(|p| p.number)
+            .ok_or_else(|| {
+                anyhow!("No phase has started yet. Run `phasewise run` or `phasewise next` first.")
+            })?,
+    };
+    let phase = &state.phases[number - 1];
+    let tries = match phase.attempts {
+        1 => "1 attempt".to_string(),
+        n => format!("{n} attempts"),
+    };
+    outln!(
+        "Phase {number} · {} ({}, {tries})",
+        phase.title,
+        status_label(phase.status)
+    );
+    if let Some(failure) = &phase.failure {
+        outln!();
+        outln!("Failure: {}", failure.detail);
+    }
+    if let Some(summary) = &phase.summary {
+        outln!();
+        outln!("Agent summary:\n{summary}");
+    }
+    let mut files: Vec<PathBuf> = (1..=phase.attempts)
+        .flat_map(|k| {
+            [
+                run.paths.agent_stdout_log(number, k),
+                run.paths.agent_stderr_log(number, k),
+            ]
+        })
+        .collect();
+    files.push(run.paths.verify_log(number));
+    files.retain(|f| f.is_file());
+    if !files.is_empty() {
+        outln!();
+        outln!("Logs:");
+        for file in files {
+            outln!("  {}", file.display());
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn diff(n: Option<u32>) -> Result<ExitCode> {
     let run = load_run()?;
     let state = &run.state;
     let number = match n {
-        Some(n) => {
-            let n = n as usize;
-            if n == 0 || n > state.phases.len() {
-                return Err(anyhow!(
-                    "Phase {n} does not exist; this run has phases 1 to {}. Run `phasewise status`.",
-                    state.phases.len()
-                ));
-            }
-            n
-        }
+        Some(n) => existing_phase(state, n)?,
         None => state
             .phases
             .iter()
