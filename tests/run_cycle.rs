@@ -255,6 +255,28 @@ fn status_shows_the_cost_against_the_limit() {
 }
 
 #[test]
+fn status_json_describes_the_run() {
+    let env = Env::with_plan(&plan_with("max_cost_usd = 5\n"));
+    assert_eq!(env.ok(&["status", "--json"], &[]).stdout.trim(), "null");
+    env.ok(&["run"], &[]);
+    let out = env.ok(&["status", "--json"], &[]);
+    let value: Value = serde_json::from_str(&out.stdout).expect("valid JSON");
+    assert_eq!(value["status"], "active");
+    assert_eq!(value["agent"], "claude");
+    assert_eq!(value["max_cost_usd"], 5.0);
+    assert_eq!(value["cost_usd"], 0.01);
+    let phases = value["phases"].as_array().expect("phases");
+    assert_eq!(phases.len(), 3);
+    assert_eq!(phases[0]["status"], "awaiting_review");
+    assert_eq!(phases[0]["title"], "First");
+    assert_eq!(phases[0]["attempts"], 1);
+    assert!(phases[0]["checkpoint_sha"].is_string());
+    assert_eq!(phases[0]["failure"], Value::Null);
+    assert_eq!(phases[1]["status"], "pending");
+    assert_eq!(phases[1]["cost_usd"], Value::Null);
+}
+
+#[test]
 fn the_environment_raises_the_spending_limit() {
     let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
     env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);

@@ -189,8 +189,12 @@ pub enum Command {
     },
 
     /// Show a table of phases: state, attempts, changed files and cost if known
-    #[command(after_help = "Examples:\n  phasewise status")]
-    Status,
+    #[command(after_help = "Examples:\n  phasewise status\n  phasewise status --json")]
+    Status {
+        /// Print the run as JSON, for scripts (`null` when there is no run)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Print the diff of phase N (default: the last one with a checkpoint)
     #[command(after_help = "Examples:\n  phasewise diff\n  phasewise diff 2")]
@@ -296,7 +300,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Completions { shell }) => completions(shell),
         Some(Command::Rollback { n, yes }) => rollback_command(n as usize, yes),
         Some(Command::Merge { yes }) => merge_command(yes),
-        Some(Command::Status) => status(),
+        Some(Command::Status { json }) => status(json),
         Some(Command::Diff { n }) => diff(n),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
         Some(Command::Abort) => abort_command(),
@@ -1047,12 +1051,58 @@ fn completions(shell: clap_complete::Shell) -> Result<ExitCode> {
     }
 }
 
-fn status() -> Result<ExitCode> {
+/// The run as JSON: the stable shape scripts can rely on.
+fn status_json(run: &Run) -> Result<String> {
+    let state = &run.state;
+    let phases: Vec<serde_json::Value> = state
+        .phases
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "number": p.number,
+                "title": p.title,
+                "status": p.status,
+                "attempts": p.attempts,
+                "cost_usd": p.cost_usd,
+                "model": p.agent_model.as_ref().or(p.model.as_ref()),
+                "effort": p.effort,
+                "checkpoint_sha": p.checkpoint_sha,
+                "failure": p.failure.as_ref().map(|f| serde_json::json!({
+                    "kind": f.kind,
+                    "detail": f.detail,
+                })),
+            })
+        })
+        .collect();
+    let any_cost = state.phases.iter().any(|p| p.cost_usd.is_some());
+    let value = serde_json::json!({
+        "run_id": state.run_id,
+        "status": state.status,
+        "plan_title": state.plan_title,
+        "agent": state.agent.to_string(),
+        "original_branch": state.original_branch,
+        "run_branch": state.run_branch,
+        "cost_usd": any_cost.then(|| state.cost_usd()),
+        "max_cost_usd": run.plan.config.max_cost_usd,
+        "phases": phases,
+    });
+    Ok(serde_json::to_string_pretty(&value)?)
+}
+
+fn status(json: bool) -> Result<ExitCode> {
     let Some(run) = ops::load_current(&current_dir()?)? else {
-        outln!("{NO_RUN}");
+        if json {
+            outln!("null");
+        } else {
+            outln!("{NO_RUN}");
+        }
         return Ok(ExitCode::SUCCESS);
     };
     announce_recovery(&run);
+    if json {
+        outln!("{}", status_json(&run)?);
+        return Ok(ExitCode::SUCCESS);
+    }
     let state = &run.state;
     let run_status = match state.status {
         RunStatus::Active => "active",

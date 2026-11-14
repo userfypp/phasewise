@@ -274,7 +274,7 @@ terminal UI.
 | `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
 | `phasewise merge` | Squashes a completed run into the original branch and commits it. `--yes` skips the question. |
-| `phasewise status` | The run's cost so far (against `max_cost_usd`, if set) and a table of phases: state, attempts, files, cost, model. |
+| `phasewise status` | The run's cost so far (against `max_cost_usd`, if set) and a table of phases: state, attempts, files, cost, model. `--json` prints the run as JSON for scripts (`null` when there is no run). |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
