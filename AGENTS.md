@@ -17,7 +17,7 @@ and stops for the user's review.
 - [docs/agents.md](docs/agents.md): the exact command lines phasewise gives
   Claude Code and Codex, and the output formats it parses.
 - [docs/RELEASING.md](docs/RELEASING.md): how versions, the changelog and releases
-  are made (by tooling, from pull request titles).
+  are made (by tooling, from pull request titles; `scripts/release-notes.py` writes the notes).
 - [docs/user-guide.md](docs/user-guide.md) and
   [docs/plan-format.md](docs/plan-format.md): the behaviour users rely on.
 

@@ -6,7 +6,7 @@
 
 1. Open the draft pull request titled `chore(main): release X.Y.Z`. Read the version and the changelog it proposes.
 2. Mark it ready for review, wait for the required checks, and squash merge it.
-3. The Release workflow tags `vX.Y.Z`, creates the GitHub Release, runs the checks again on that commit and publishes the crate to crates.io.
+3. The Release workflow tags `vX.Y.Z` and creates a draft GitHub Release, runs the checks again on that commit and publishes the crate to crates.io. Only then does it write the notes and publish the release, titled `Phasewise vX.Y.Z`.
 4. Release Please opens the next draft pull request as soon as there is a releasable change.
 
 Do not create release tags by hand and do not push to `main` directly.
@@ -33,11 +33,26 @@ To choose a version yourself, put a footer in the body of a commit that reaches 
 Release-As: 1.0.0
 ```
 
+## Release notes
+
+`CHANGELOG.md` is Release Please's raw output. The notes of the GitHub Release are the same entries, normalised by `scripts/release-notes.py`:
+
+- Every entry starts with a capital letter and ends with a full stop. A word that has its own spelling (`phasewise`, `iOS`, `v2`) is left alone, so write titles in the imperative and start with a plain word: `feat: show the cost of a run`.
+- The scope is dropped, and the entry links to its pull request and to the issues it closes (a `Closes #N` line in the description). Without a pull request it links to the commit.
+- Sections come in a fixed order: Breaking changes, Added, Improved, Fixed, Reverted, Documentation. Then Install, and Validation (what the run verified, with the crates.io and workflow links), and a link to the full changelog.
+
+To preview the notes of a version already in the changelog:
+
+```sh
+python3 scripts/release-notes.py --version X.Y.Z
+```
+
 ## When something fails
 
 Start with Actions, then Release, then the failed run, then Re-run failed jobs.
 
-- The checks fail after the tag exists: fix the cause on `main` through a pull request, then merge the next release. Do not move the tag.
+- The checks fail after the tag exists: the release stays a draft. Fix the cause on `main` through a pull request and merge the next release; delete the draft and its tag first if you do not want that version at all.
+- The notes step fails (a changelog entry the script does not understand): fix `scripts/release-notes.py` or the entry through a pull request, then re-run the failed job, which also publishes the draft.
 - Publishing fails before crates.io accepted the crate (a setting, a token, a network error): re-run the failed job. Nothing was published, so a retry is safe.
 - A published version cannot be replaced or deleted from crates.io. If it is broken, run `cargo yank --version X.Y.Z` and release a fixed one.
 - The release pull request has no checks: the Release workflow ran with the default token instead of `RELEASE_PLEASE_TOKEN`, or the token expired. Renew the token and push an empty commit to the release branch, or close the pull request and let the next run recreate it.
