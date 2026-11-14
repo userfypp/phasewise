@@ -393,6 +393,14 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
     outln!("Check timeout: {} s", config.verify_timeout_seconds);
     if let Some(limit) = config.max_cost_usd {
         outln!("Spending limit: ${limit:.2}");
+        let uses_codex = config.agent == AgentKind::Codex
+            || plan
+                .phases
+                .iter()
+                .any(|p| p.agent == Some(AgentKind::Codex));
+        if uses_codex {
+            outln!("  Codex reports no cost, so the limit only counts the phases that report one.");
+        }
     }
     outln!();
     for phase in &plan.phases {

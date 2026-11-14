@@ -135,3 +135,24 @@ fn init_outside_repo_exits_1() {
         .code(1)
         .stderr(predicate::str::contains("Not inside a git repository"));
 }
+
+#[test]
+fn check_notes_that_codex_phases_do_not_count_against_the_limit() {
+    let repo = TestRepo::new();
+    repo.write(
+        "phasewise.md",
+        "+++\nmax_cost_usd = 2\n+++\n\n## A\n\nx\n\n```phasewise\nagent = \"codex\"\n```\n",
+    );
+    repo.phasewise()
+        .arg("check")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Spending limit: $2.00"))
+        .stdout(predicate::str::contains("Codex reports no cost"));
+    repo.write("phasewise.md", "+++\nmax_cost_usd = 2\n+++\n\n## A\n\nx\n");
+    repo.phasewise()
+        .arg("check")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Codex reports no cost").not());
+}
