@@ -40,7 +40,9 @@ phase's agent reports and checks it at two points: it does not retry a failed
 check once the run has reached the limit, and it does not start the next phase
 (in `--auto`, it stops before approving the one under review). Cost is checked
 between agent sessions, so a session that is already running can go over the
-limit. Only Claude Code reports a cost; with Codex the limit never triggers.
+limit. What a discarded attempt spent (`retry`, `rollback`) stays counted;
+`retry` and `next` refuse before changing anything once the limit is reached.
+Only Claude Code reports a cost; with Codex the limit never triggers.
 
 `PHASEWISE_MAX_COST_USD` overrides the limit for one command, for example to
 finish a run that stopped at its limit.

@@ -1083,6 +1083,7 @@ fn status_json(run: &Run) -> Result<String> {
         })
         .collect();
     let any_cost = state.phases.iter().any(|p| p.cost_usd.is_some());
+    let limit = ops::spending_limit(run).unwrap_or(run.plan.config.max_cost_usd);
     let value = serde_json::json!({
         "run_id": state.run_id,
         "status": state.status,
@@ -1091,7 +1092,7 @@ fn status_json(run: &Run) -> Result<String> {
         "original_branch": state.original_branch,
         "run_branch": state.run_branch,
         "cost_usd": any_cost.then(|| state.cost_usd()),
-        "max_cost_usd": run.plan.config.max_cost_usd,
+        "max_cost_usd": limit,
         "phases": phases,
     });
     Ok(serde_json::to_string_pretty(&value)?)
@@ -1130,7 +1131,7 @@ fn status(json: bool) -> Result<ExitCode> {
     );
     if state.phases.iter().any(|p| p.cost_usd.is_some()) {
         let spent = crate::display::money(state.cost_usd());
-        match run.plan.config.max_cost_usd {
+        match ops::spending_limit(&run).unwrap_or(run.plan.config.max_cost_usd) {
             Some(limit) => outln!("Cost:   {spent} of {} limit", crate::display::money(limit)),
             None => outln!("Cost:   {spent}"),
         }

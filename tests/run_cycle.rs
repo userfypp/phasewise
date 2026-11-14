@@ -298,6 +298,26 @@ fn logs_describe_a_failed_phase() {
 }
 
 #[test]
+fn an_exhausted_budget_refuses_retry_and_next_without_losing_work() {
+    let env = Env::with_plan(&plan_with("max_cost_usd = 0.01\n"));
+    env.ok(&["run"], &[]);
+    for command in ["retry", "next"] {
+        let out = env.exec(&[command], &[]);
+        assert_eq!(out.code, 1, "{command}: {}\n{}", out.stdout, out.stderr);
+        assert!(out.stderr.contains("limit"), "{}", out.stderr);
+        assert_eq!(env.statuses()[0], "awaiting_review", "{command}");
+        assert_eq!(env.repo.read("phase-1.txt"), "phase 1\n");
+    }
+    // A retry keeps what the first attempt spent, so the limit still counts it.
+    let limit = [("PHASEWISE_MAX_COST_USD", "1")];
+    let json = env.ok(&["status", "--json"], &limit).stdout;
+    let value: Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(value["max_cost_usd"], 1.0);
+    env.ok(&["retry"], &limit);
+    assert_eq!(env.state()["phases"][0]["cost_usd"], 0.02);
+}
+
+#[test]
 fn the_environment_raises_the_spending_limit() {
     let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
     env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);

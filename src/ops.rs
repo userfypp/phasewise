@@ -397,6 +397,20 @@ pub fn load_active(cwd: &Path) -> Result<Option<Run>> {
     Ok(load_current(cwd)?.filter(|run| run.state.status == RunStatus::Active))
 }
 
+/// The run's spending limit: `PHASEWISE_MAX_COST_USD` over the plan's `max_cost_usd`.
+pub fn spending_limit(run: &Run) -> Result<Option<f64>> {
+    match std::env::var(MAX_COST_ENV) {
+        Ok(value) => match value.trim().parse::<f64>() {
+            Ok(limit) if limit.is_finite() && limit > 0.0 => Ok(Some(limit)),
+            _ => bail!(
+                "{MAX_COST_ENV} must be an amount in US dollars greater than 0, got `{value}`. \
+Unset it or fix the value."
+            ),
+        },
+        Err(_) => Ok(run.plan.config.max_cost_usd),
+    }
+}
+
 /// Limits from the plan; `PHASEWISE_PHASE_TIMEOUT_SECONDS` overrides the phase timeout.
 pub fn settings(run: &Run) -> Result<PhaseSettings> {
     let config = &run.plan.config;
@@ -412,16 +426,7 @@ Unset it or fix the value."
         }
         Err(_) => Duration::from_secs(config.phase_timeout_minutes * 60),
     };
-    let max_cost_usd = match std::env::var(MAX_COST_ENV) {
-        Ok(value) => match value.trim().parse::<f64>() {
-            Ok(limit) if limit.is_finite() && limit > 0.0 => Some(limit),
-            _ => bail!(
-                "{MAX_COST_ENV} must be an amount in US dollars greater than 0, got `{value}`. \
-Unset it or fix the value."
-            ),
-        },
-        Err(_) => config.max_cost_usd,
-    };
+    let max_cost_usd = spending_limit(run)?;
     Ok(PhaseSettings {
         max_retries: config.max_retries,
         phase_timeout,
@@ -495,14 +500,17 @@ pub fn next(
     check_can_advance(run)?;
     overrides.apply(&mut run.state);
     // Only needed when a phase will run (completing the run commits nothing).
-    // Checked before approving, so a missing identity leaves the review open.
-    if run
+    // Checked before approving, so a missing identity or an exhausted budget
+    // leaves the review open.
+    if let Some(pending) = run
         .state
         .phases
         .iter()
-        .any(|p| p.status == PhaseStatus::Pending)
+        .find(|p| p.status == PhaseStatus::Pending)
+        .map(|p| p.number)
     {
         run.git.check_identity()?;
+        check_budget(run, &settings(run)?, pending)?;
     }
     if run
         .state
@@ -586,7 +594,8 @@ or run `phasewise rollback` to discard them.",
     Ok(())
 }
 
-/// Puts a phase back to `pending`, clearing everything but `attempts`.
+/// Puts a phase back to `pending`, clearing everything but `attempts` and the
+/// cost: what an attempt spent stays spent, and counts against `max_cost_usd`.
 fn reset_phase(run: &mut Run, number: usize) {
     if let Some(phase) = run.state.phase_mut(number) {
         phase.status = PhaseStatus::Pending;
@@ -594,7 +603,6 @@ fn reset_phase(run: &mut Run, number: usize) {
         phase.checkpoint_sha = None;
         phase.summary = None;
         phase.failure = None;
-        phase.cost_usd = None;
         phase.model = None;
         phase.agent_model = None;
         phase.effort = None;
@@ -640,6 +648,8 @@ then `phasewise rollback 0` to start over.",
                 number - 1
             )
         })?;
+    // Before discarding anything: a refused retry must leave the work as it is.
+    check_budget(run, &settings(run)?, number)?;
     run.git.reset_hard(&previous)?;
     run.git.clean_untracked()?;
     reset_phase(run, number);
