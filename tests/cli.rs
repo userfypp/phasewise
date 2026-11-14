@@ -17,6 +17,27 @@ fn help_lists_all_subcommands() {
 }
 
 #[test]
+fn completions_print_a_script_for_each_shell() {
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        phasewise()
+            .args(["completions", shell])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("phasewise"))
+            .stdout(predicate::str::contains("completions"));
+    }
+}
+
+#[test]
+fn completions_reject_an_unknown_shell() {
+    phasewise()
+        .args(["completions", "nushell"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("possible values"));
+}
+
+#[test]
 fn version_long_flag() {
     phasewise()
         .arg("--version")

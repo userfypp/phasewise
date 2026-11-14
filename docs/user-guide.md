@@ -278,6 +278,7 @@ terminal UI.
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
+| `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. |
 | `phasewise abort` | Abandons the run and returns to the original branch. |
 
 `--auto` approves every phase that passes its checks and continues until the

@@ -211,6 +211,16 @@ pub enum Command {
         agent: Option<AgentArg>,
     },
 
+    /// Print a completion script for a shell (bash, zsh, fish, elvish or powershell)
+    #[command(
+        after_help = "Examples:\n  phasewise completions zsh > ~/.zfunc/_phasewise\n  phasewise completions bash > ~/.local/share/bash-completion/completions/phasewise"
+    )]
+    Completions {
+        /// Shell to generate the script for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Mark the run as abandoned and return to the original branch (the run branch is kept)
     #[command(after_help = "Examples:\n  phasewise abort")]
     Abort,
@@ -283,6 +293,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Next { auto, settings }) => next_command(auto, &settings),
         Some(Command::Retry { note, settings }) => retry_command(note, &settings),
         Some(Command::Models { agent }) => models_command(agent),
+        Some(Command::Completions { shell }) => completions(shell),
         Some(Command::Rollback { n, yes }) => rollback_command(n as usize, yes),
         Some(Command::Merge { yes }) => merge_command(yes),
         Some(Command::Status) => status(),
@@ -1023,6 +1034,17 @@ fn print_failure(run: &Run) {
         "{}",
         st.dim("  or inspect the working tree; it was left as the agent left it")
     );
+}
+
+/// Prints the completion script. It is built in memory first: the generator
+/// panics when stdout is closed early (`| head`).
+fn completions(shell: clap_complete::Shell) -> Result<ExitCode> {
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "phasewise", &mut script);
+    match std::io::stdout().write_all(&script) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.into()),
+        _ => Ok(ExitCode::SUCCESS),
+    }
 }
 
 fn status() -> Result<ExitCode> {
