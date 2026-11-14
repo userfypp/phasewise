@@ -318,6 +318,20 @@ fn an_exhausted_budget_refuses_retry_and_next_without_losing_work() {
 }
 
 #[test]
+fn run_refuses_a_model_for_a_first_phase_of_the_other_agent() {
+    let plan = "+++\nagent = \"claude\"\n+++\n\n## Phase 1: First\n\nDo one.\n\n```phasewise\nagent = \"codex\"\n```\n";
+    let env = Env::with_plan(plan);
+    let out = env.exec(&["run", "--model", "sonnet"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stderr.contains("Phase 1 runs with codex"),
+        "{}",
+        out.stderr
+    );
+    assert!(!env.repo.path().join(".phasewise/current").exists());
+}
+
+#[test]
 fn the_environment_raises_the_spending_limit() {
     let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
     env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);

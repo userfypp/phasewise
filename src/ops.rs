@@ -131,6 +131,17 @@ pub fn start(
     overrides: &Overrides,
 ) -> Result<Run> {
     let plan = plan::load(plan_path)?;
+    // Same rule as `next` and `retry`: a model belongs to one agent.
+    let run_agent = agent_override.unwrap_or(plan.config.agent);
+    let first_agent = match plan.phases.first() {
+        Some(first) if run_agent == plan.config.agent => first.agent.unwrap_or(run_agent),
+        _ => run_agent,
+    };
+    if matches!(overrides.model, Some(Override::Set(_))) && first_agent != run_agent {
+        bail!(
+            "Phase 1 runs with {first_agent}; --model applies only to the run's agent ({run_agent}) phases. Run without --model."
+        );
+    }
     let plan_text = std::fs::read_to_string(plan_path)
         .with_context(|| format!("Cannot read {}", plan_path.display()))?;
     let git = Git::discover(cwd)?;

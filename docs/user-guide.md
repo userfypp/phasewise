@@ -286,6 +286,12 @@ terminal UI.
 last phase or the first failure; the last phase still waits for your review.
 `--model default` and `--effort default` remove a stored choice.
 
+A phase can run with the other agent when its settings block sets `agent` (see
+[the plan format](plan-format.md)). `--model` then applies only to phases of
+the run's agent: `run`, `next` and `retry` refuse it for a phase of the other
+agent. `run --agent` with an agent other than the plan's makes every phase use
+it; naming the plan's own agent changes nothing, so its phase blocks still apply.
+
 Exit codes: `0` success, `1` usage or environment error, `3` a phase ended
 failed, `130` stopped by a second Ctrl-C.
 
