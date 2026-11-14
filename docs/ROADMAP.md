@@ -9,8 +9,6 @@ the case for one is welcome.
   log.
 - More agents, such as Gemini CLI or opencode.
 - Spending limits per phase or per run.
-- A monochrome TUI when `NO_COLOR` is set. Today `NO_COLOR` only affects
-  command output.
 - Sanitized captures of real agent output as test fixtures.
 - Windows support.
 

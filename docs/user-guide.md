@@ -313,7 +313,7 @@ Environment variables:
 | `PHASEWISE_CLAUDE_BIN`, `PHASEWISE_CODEX_BIN` | Use another binary for the agent. |
 | `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase. |
 | `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200). |
-| `NO_COLOR` | Turns off colour in command output. |
+| `NO_COLOR` | Turns off colour in command output and in the screens (bold and dim stay). |
 
 ## When something goes wrong
 

@@ -648,17 +648,34 @@ impl<'a> Ui<'a> {
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        // Same rule as the command output: `NO_COLOR` (non-empty) or a dumb
+        // terminal means no colour.
+        let monochrome = !crate::style::color_enabled(
+            true,
+            std::env::var("NO_COLOR").ok().as_deref(),
+            std::env::var("TERM").ok().as_deref(),
+        );
         loop {
             beat();
             self.tick();
             if self.visible_dirty() {
                 match (self.screen, &mut self.run) {
                     (Screen::Run, Some(tui)) => {
-                        terminal.draw(|frame| view::draw(frame, &mut tui.app))?;
+                        terminal.draw(|frame| {
+                            view::draw(frame, &mut tui.app);
+                            if monochrome {
+                                widgets::strip_color(frame.buffer_mut());
+                            }
+                        })?;
                         tui.dirty = false;
                     }
                     _ => {
-                        terminal.draw(|frame| home_view::draw(frame, &self.home.home))?;
+                        terminal.draw(|frame| {
+                            home_view::draw(frame, &self.home.home);
+                            if monochrome {
+                                widgets::strip_color(frame.buffer_mut());
+                            }
+                        })?;
                         self.home.dirty = false;
                     }
                 }

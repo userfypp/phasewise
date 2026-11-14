@@ -55,7 +55,7 @@ check runs as a child process in its own process group.
 | `state.rs` | `state.json`, the `.phasewise` layout, atomic writes, the run lock and recovery. |
 | `process.rs` | Process groups, termination, signals, the panic hook, the closed-terminal watch. |
 | `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths. |
-| `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset and `TERM` not `dumb`. |
+| `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset and `TERM` not `dumb`. The TUI follows the same rule: when colour is off, `widgets::strip_color` clears every colour of a drawn frame and turns the dim grey into the dim attribute. |
 | `doctor.rs` | `phasewise doctor`. |
 | `tui/mod.rs` | The TUI's event loop: terminal setup and restore, the two screens, worker threads, refreshes. |
 | `tui/home.rs`, `tui/app.rs` | Pure state machines for the home and run screens: a key in, a command out, no I/O. |

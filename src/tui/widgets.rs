@@ -34,6 +34,19 @@ pub fn role_style(role: Role) -> Style {
     }
 }
 
+/// Takes the colour out of a drawn frame, for `NO_COLOR`. Bold and underline
+/// stay; the dim grey becomes the terminal's own dim attribute, so the
+/// difference between a message and its detail does not depend on colour.
+pub fn strip_color(buffer: &mut ratatui::buffer::Buffer) {
+    for cell in &mut buffer.content {
+        if cell.fg == Color::DarkGray {
+            cell.modifier.insert(Modifier::DIM);
+        }
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+    }
+}
+
 pub fn dim() -> Style {
     Style::new().fg(Color::DarkGray)
 }
@@ -587,6 +600,24 @@ pub fn render_card(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strip_color_keeps_the_weight_and_turns_grey_into_dim() {
+        use ratatui::buffer::Buffer;
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buffer = Buffer::empty(area);
+        buffer.set_string(0, 0, "a", Style::new().fg(Color::Cyan).bg(Color::Red));
+        buffer.set_string(1, 0, "b", dim());
+        buffer.set_string(2, 0, "c", accent_bold());
+        strip_color(&mut buffer);
+        let [a, b, c] = [0, 1, 2].map(|x| buffer[(x, 0)].clone());
+        assert_eq!((a.fg, a.bg), (Color::Reset, Color::Reset));
+        assert!(a.modifier.is_empty());
+        assert_eq!(b.fg, Color::Reset);
+        assert!(b.modifier.contains(Modifier::DIM));
+        assert_eq!(c.fg, Color::Reset);
+        assert!(c.modifier.contains(Modifier::BOLD));
+    }
+
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
