@@ -418,8 +418,15 @@ If no git command is running, the lock is left over from a crash: delete {path} 
         if let Some(input) = stdin
             && let Some(mut pipe) = child.stdin.take()
         {
-            pipe.write_all(input.as_bytes())
-                .with_context(|| format!("Cannot write to `git {}`", args.join(" ")))?;
+            // git may exit before it reads its input (a held `index.lock`, for
+            // one). Then the pipe is closed, and git's own exit status and
+            // message, which the caller needs, matter more than the write.
+            if let Err(error) = pipe.write_all(input.as_bytes())
+                && error.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(error)
+                    .with_context(|| format!("Cannot write to `git {}`", args.join(" ")));
+            }
         }
         child
             .wait_with_output()
