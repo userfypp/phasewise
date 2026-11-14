@@ -23,7 +23,9 @@ pub fn is_alive(pid: u32) -> bool {
         .map(|out| {
             out.status.success() || String::from_utf8_lossy(&out.stderr).contains("not permitted")
         })
-        .unwrap_or(false)
+        // When `sh` cannot be started nothing is known, and a lock must not be
+        // taken from a process that may be alive.
+        .unwrap_or(true)
 }
 
 /// Process groups of the live [`GroupChild`]ren, so a second signal or a panic

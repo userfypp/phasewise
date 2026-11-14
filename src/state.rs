@@ -370,7 +370,9 @@ impl LockGuard {
                     if !stale || attempt == 1 {
                         return Err(lock_in_use(pid, &path));
                     }
-                    let _ = fs::remove_file(&path);
+                    if !take_over_stale(&path, trimmed) {
+                        return Err(lock_in_use(None, &path));
+                    }
                 }
                 Err(e) => {
                     return Err(e).with_context(|| format!("Cannot create {}", path.display()));
@@ -379,6 +381,29 @@ impl LockGuard {
         }
         Err(lock_in_use(None, &path))
     }
+}
+
+/// Removes a lock that looked stale (it held `seen`). The file is moved aside
+/// first and read again: another process may have replaced the stale lock with
+/// its own between our read and now, and deleting that one would leave two
+/// processes holding the run. When the moved file is not the one we saw, it is
+/// put back and the lock counts as in use. Returns whether the way is clear.
+fn take_over_stale(path: &Path, seen: &str) -> bool {
+    let aside = path.with_extension(format!("stale-{}", std::process::id()));
+    if fs::rename(path, &aside).is_err() {
+        // Gone already: released, or taken over by someone else. Try again.
+        return true;
+    }
+    let moved = fs::read_to_string(&aside).unwrap_or_default();
+    if moved.trim() == seen {
+        let _ = fs::remove_file(&aside);
+        return true;
+    }
+    // Not the lock we judged: put it back (this fails if yet another process
+    // created a lock meanwhile, which then stands).
+    let _ = fs::hard_link(&aside, path);
+    let _ = fs::remove_file(&aside);
+    false
 }
 
 fn lock_in_use(pid: Option<u32>, path: &Path) -> anyhow::Error {
@@ -395,7 +420,13 @@ if no phasewise process is running, delete the lock file.",
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        // Only a lock that still names this process: if it was replaced, the
+        // new holder's lock is not ours to delete.
+        let ours = fs::read_to_string(&self.path)
+            .is_ok_and(|text| text.trim() == std::process::id().to_string());
+        if ours {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -463,6 +494,29 @@ pub fn run_branch_name(run_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn taking_over_removes_the_lock_that_was_seen() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let lock = dir.path().join("lock");
+        fs::write(&lock, "999999\n").expect("write");
+        assert!(take_over_stale(&lock, "999999"));
+        assert!(!lock.exists());
+        // Nothing left behind, and a missing lock is fine.
+        assert_eq!(fs::read_dir(dir.path()).expect("list").count(), 0);
+        assert!(take_over_stale(&lock, "999999"));
+    }
+
+    #[test]
+    fn taking_over_puts_back_a_lock_that_is_not_the_one_seen() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let lock = dir.path().join("lock");
+        // Another process replaced the stale lock with its own meanwhile.
+        fs::write(&lock, "4242\n").expect("write");
+        assert!(!take_over_stale(&lock, "999999"));
+        assert_eq!(fs::read_to_string(&lock).expect("read"), "4242\n");
+        assert_eq!(fs::read_dir(dir.path()).expect("list").count(), 1);
+    }
+
     use super::*;
 
     fn sample() -> RunState {

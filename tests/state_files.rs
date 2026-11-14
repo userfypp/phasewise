@@ -131,3 +131,16 @@ fn recovery_marks_interrupted_phases() {
     }
     assert_eq!(RunState::load(&paths).unwrap(), recovered);
 }
+
+#[test]
+fn dropping_a_guard_leaves_a_lock_that_was_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = RunPaths::new(dir.path(), "r1");
+    let guard = LockGuard::acquire(&paths).unwrap();
+    let mut other = sleeper();
+    std::fs::write(paths.lock_file(), format!("{}\n", other.id())).unwrap();
+    drop(guard);
+    assert_eq!(lock_holder(&paths), Some(other.id()));
+    other.kill().unwrap();
+    other.wait().unwrap();
+}
