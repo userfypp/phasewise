@@ -1048,6 +1048,13 @@ fn status() -> Result<ExitCode> {
         state.run_branch,
         state.original_branch
     );
+    if state.phases.iter().any(|p| p.cost_usd.is_some()) {
+        let spent = crate::display::money(state.cost_usd());
+        match run.plan.config.max_cost_usd {
+            Some(limit) => outln!("Cost:   {spent} of {} limit", crate::display::money(limit)),
+            None => outln!("Cost:   {spent}"),
+        }
+    }
     outln!();
 
     let rows: Vec<[String; 6]> = state

@@ -243,6 +243,18 @@ fn the_spending_limit_stops_the_run_before_the_next_phase() {
 }
 
 #[test]
+fn status_shows_the_cost_against_the_limit() {
+    let env = Env::with_plan(&plan_with("max_cost_usd = 5\n"));
+    env.ok(&["run"], &[]);
+    let out = env.ok(&["status"], &[]);
+    assert!(
+        out.stdout.contains("Cost:   $0.01 of $5.00 limit"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn the_environment_raises_the_spending_limit() {
     let env = Env::with_plan(&plan_with("max_cost_usd = 0.015\n"));
     env.ok(&["run", "--auto"], &[("PHASEWISE_MAX_COST_USD", "1")]);

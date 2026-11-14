@@ -98,8 +98,10 @@ The run id is the UTC time plus four random hex characters:
 5. A check failed and retries are left (`max_retries`): the failure report
    (command, exit code, last 200 lines of output) goes back to the agent, in
    the same session when its id is known, and the cycle repeats from step 2.
-   No retries left: `failed` with `verify_failed`, and the tree is left as it
-   is for the user to inspect.
+   No retries left, or the run has reached `max_cost_usd`: `failed` with
+   `verify_failed`, and the tree is left as it is for the user to inspect.
+   `ops` also refuses to start a phase (and `--auto` to approve one) once the
+   limit is reached.
 6. All checks passed: `git add -A`, then a checkpoint commit on the run branch,
    even when nothing changed. The phase is `awaiting_review`.
 
