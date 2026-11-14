@@ -397,3 +397,39 @@ fn orphaned_running_phase_is_recovered_once_and_can_be_retried() {
     assert_eq!(env.statuses()[0], "awaiting_review");
     env.check_invariants();
 }
+
+#[test]
+fn a_damaged_run_says_how_to_forget_it() {
+    let env = Env::new();
+    env.repo.write(".phasewise/current", "r1\n");
+    env.repo
+        .write(".phasewise/runs/r1/state.json", "{ truncated");
+    for args in [&["status"][..], &["next"][..]] {
+        let out = env.exec(args, &[]);
+        assert_ne!(out.code, 0, "{args:?}: {}", out.stderr);
+        assert!(
+            out.stderr.contains("run r1 cannot be read")
+                && out.stderr.contains("delete `.phasewise/current`"),
+            "{args:?}: {}",
+            out.stderr
+        );
+    }
+}
+
+#[test]
+fn abort_explains_what_to_do_when_the_original_branch_is_gone() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    env.repo.git(&["branch", "-m", "main", "trunk"]);
+    let out = env.exec(&["abort"], &[]);
+    assert_ne!(out.code, 0, "{}", out.stdout);
+    assert!(
+        out.stderr.contains("Cannot go back to `main`") && out.stderr.contains("phasewise abort"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(env.state()["status"], "active");
+    env.repo.git(&["switch", "trunk"]);
+    env.ok(&["abort"], &[]);
+    assert_eq!(env.state()["status"], "aborted");
+}

@@ -347,6 +347,17 @@ pub fn load_current(cwd: &Path) -> Result<Option<Run>> {
     load_from_git(&git)
 }
 
+/// Says what to do when the files of the current run cannot be read: without
+/// this, every command fails and the only way out is a file the user was never
+/// told about.
+fn damaged_run(run_id: &str, error: anyhow::Error) -> anyhow::Error {
+    anyhow!(
+        "The files of run {run_id} cannot be read: {error:#}. If you do not need this run, \
+delete `.phasewise/current` to forget it (its files stay in `.phasewise/runs/{run_id}/`) and \
+start a new one."
+    )
+}
+
 pub(crate) fn load_from_git(git: &Git) -> Result<Option<Run>> {
     let Some(run_id) = PhasewiseDir::new(git.root()).read_current()? else {
         return Ok(None);
@@ -355,10 +366,10 @@ pub(crate) fn load_from_git(git: &Git) -> Result<Option<Run>> {
     if !paths.state_file().exists() {
         return Ok(None);
     }
-    let before = RunState::load(&paths)?;
+    let before = RunState::load(&paths).map_err(|e| damaged_run(&run_id, e))?;
     let state = load_with_recovery(&paths)?;
     let recovered = recovered_phases(&before, &state);
-    let plan = plan::load(&paths.plan_copy())?;
+    let plan = plan::load(&paths.plan_copy()).map_err(|e| damaged_run(&run_id, e))?;
     Ok(Some(Run {
         git: git.clone(),
         paths,
@@ -674,7 +685,13 @@ pub fn abort(run: &mut Run) -> Result<AbortOutcome> {
             );
             leftovers_sha = Some(run.git.commit(&message, false)?);
         }
-        run.git.switch(&run.state.original_branch)?;
+        run.git.switch(&run.state.original_branch).map_err(|e| {
+            anyhow!(
+                "Cannot go back to `{}`: {e:#}. Nothing is lost: uncommitted work is saved on \
+the run branch. Switch to any branch yourself with `git switch`, then run `phasewise abort` again.",
+                run.state.original_branch
+            )
+        })?;
         switched = true;
     }
     run.state.status = RunStatus::Aborted;
