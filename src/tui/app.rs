@@ -46,6 +46,7 @@ pub enum Mode {
     ConfirmInterrupt(usize),
     ConfirmQuit(usize),
     ConfirmAbandon(usize),
+    ConfirmMerge(usize),
     /// Optional note for a retry, being typed.
     Note(String),
     /// Popup listing every key.
@@ -62,6 +63,8 @@ pub enum Command {
     Interrupt,
     /// Abandon the run (`ops::abort`), already confirmed.
     Abandon,
+    /// Merge the completed run (`ops::merge`), already confirmed.
+    Merge,
     /// Go back to the home screen.
     Home,
     /// Reload the caches of the (newly) selected phase.
@@ -182,6 +185,7 @@ impl App {
             Mode::ConfirmAbandon(row) => {
                 self.confirm(key, row, Mode::ConfirmAbandon, Command::Abandon)
             }
+            Mode::ConfirmMerge(row) => self.confirm(key, row, Mode::ConfirmMerge, Command::Merge),
             Mode::Note(buffer) => self.key_note(key, buffer),
             Mode::Help => {
                 // Any key closes the help; `?` is the one that opened it.
@@ -276,6 +280,13 @@ impl App {
                 }
                 Some(why) => self.refuse(why),
             },
+            KeyCode::Char('m') => match self.why_not_merge() {
+                None => {
+                    self.mode = Mode::ConfirmMerge(0);
+                    None
+                }
+                Some(why) => self.refuse(why),
+            },
             KeyCode::Char('x') => {
                 if self.running.is_some() {
                     self.mode = Mode::ConfirmInterrupt(0);
@@ -322,6 +333,16 @@ impl App {
         self.selected = target;
         self.scroll = 0;
         Some(Command::Reload)
+    }
+
+    fn why_not_merge(&self) -> Option<String> {
+        if self.running.is_some() || self.worker_busy {
+            return Some("Wait for the running work to finish first.".to_string());
+        }
+        if !self.view.completed {
+            return Some("The run is not completed: nothing to merge yet.".to_string());
+        }
+        None
     }
 
     fn running_reason(&self) -> Option<String> {
@@ -401,7 +422,8 @@ impl App {
             Mode::ConfirmRollback(..)
             | Mode::ConfirmInterrupt(_)
             | Mode::ConfirmQuit(_)
-            | Mode::ConfirmAbandon(_) => return picker_footer(2),
+            | Mode::ConfirmAbandon(_)
+            | Mode::ConfirmMerge(_) => return picker_footer(2),
             Mode::Note(_) => return vec![item("enter", "retry"), item("esc", "cancel")],
             Mode::Help => return vec![item("any key", "close")],
             Mode::Normal => {}
@@ -419,6 +441,8 @@ impl App {
             ]);
         } else if self.view.active && status == Some(PhaseStatus::Failed) {
             keys.extend([item("r", "retry"), item("b", "roll back")]);
+        } else if self.view.completed {
+            keys.extend([item("m", "merge"), item("j/k", "phase")]);
         } else {
             keys.push(item("j/k", "phase"));
         }
@@ -443,6 +467,7 @@ impl App {
                     ("n", "approve the phase and run the next one"),
                     ("r", "retry the phase, with an optional note"),
                     ("b", "roll back to the checkpoint of the phase"),
+                    ("m", "merge the completed run into its branch"),
                     ("x", "interrupt the running phase"),
                     ("A", "abandon the run"),
                 ],
@@ -490,6 +515,7 @@ mod tests {
             run_branch: "phasewise/run".into(),
             original_branch: "main".into(),
             active: true,
+            completed: false,
             phases,
         })
     }
@@ -802,6 +828,54 @@ mod tests {
         a.handle_key(key('?'));
         assert_eq!(a.handle_key(code(KeyCode::Esc)), None);
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn m_asks_before_merging_a_completed_run() {
+        let mut a = app(vec![phase(1, PhaseStatus::Done, true)]);
+        a.view.active = false;
+        a.view.completed = true;
+        assert_eq!(a.handle_key(key('m')), None);
+        assert_eq!(a.mode, Mode::ConfirmMerge(0));
+        assert_eq!(a.footer().len(), 3);
+        assert_eq!(a.handle_key(key('y')), Some(Command::Merge));
+        assert_eq!(a.mode, Mode::Normal);
+        a.handle_key(key('m'));
+        assert_eq!(a.handle_key(key('n')), None);
+        assert_eq!(a.mode, Mode::Normal);
+        a.handle_key(key('m'));
+        a.handle_key(key('j'));
+        assert_eq!(a.mode, Mode::ConfirmMerge(1));
+        assert_eq!(a.handle_key(code(KeyCode::Enter)), None);
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn m_is_refused_unless_the_run_is_completed_and_idle() {
+        let mut a = reviewing();
+        assert_eq!(a.handle_key(key('m')), None);
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(
+            a.message.as_ref().map(|n| n.text.as_str()),
+            Some("The run is not completed: nothing to merge yet.")
+        );
+        let mut busy = app(vec![phase(1, PhaseStatus::Done, true)]);
+        busy.view.completed = true;
+        busy.worker_busy = true;
+        assert_eq!(busy.handle_key(key('m')), None);
+        assert_eq!(busy.mode, Mode::Normal);
+        assert!(busy.message.is_some());
+    }
+
+    #[test]
+    fn the_footer_offers_merge_only_for_a_completed_run() {
+        let mut a = app(vec![phase(1, PhaseStatus::Done, true)]);
+        let keys = |a: &App| a.footer().into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+        assert_eq!(keys(&a), ["j/k", "tab", "esc", "q"]);
+        a.view.completed = true;
+        assert_eq!(keys(&a), ["m", "j/k", "tab", "esc", "q"]);
+        a.mode = Mode::ConfirmMerge(0);
+        assert_eq!(keys(&a), ["enter", "1–2", "esc"]);
     }
 
     #[test]

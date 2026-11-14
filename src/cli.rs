@@ -180,6 +180,14 @@ pub enum Command {
         yes: bool,
     },
 
+    /// Integrate a completed run: squash its branch into the original branch and commit
+    #[command(after_help = "Examples:\n  phasewise merge\n  phasewise merge --yes")]
+    Merge {
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Show a table of phases: state, attempts, changed files and cost if known
     #[command(after_help = "Examples:\n  phasewise status")]
     Status,
@@ -276,6 +284,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Retry { note, settings }) => retry_command(note, &settings),
         Some(Command::Models { agent }) => models_command(agent),
         Some(Command::Rollback { n, yes }) => rollback_command(n as usize, yes),
+        Some(Command::Merge { yes }) => merge_command(yes),
         Some(Command::Status) => status(),
         Some(Command::Diff { n }) => diff(n),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
@@ -810,6 +819,63 @@ fn rollback_command(k: usize, yes: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn merge_command(yes: bool) -> Result<ExitCode> {
+    let mut run = load_run()?;
+    ops::prepare_merge(&run)?;
+    let state = &run.state;
+    outln!(
+        "This squashes {} into {} and commits the result there:",
+        state.run_branch,
+        state.original_branch
+    );
+    outln!(
+        "  git switch {} && git merge --squash {} && git commit",
+        state.original_branch,
+        state.run_branch
+    );
+    outln!("The run branch is kept. Nothing is pushed.");
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            return Err(anyhow!(
+                "Merge needs confirmation and stdin is not a terminal. Pass --yes to confirm."
+            ));
+        }
+        out!("Continue? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .context("Cannot read the answer from stdin. Pass --yes to confirm.")?;
+        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            outln!("Nothing changed.");
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
+    let outcome = ops::merge(&mut run)?;
+    announce_recovery(&run);
+    match &outcome.commit {
+        Some(sha) => outln!(
+            "{}",
+            Styler::for_stdout().ok(&format!(
+                "Committed {} on {}.",
+                short_sha(sha),
+                outcome.branch
+            ))
+        ),
+        None => outln!(
+            "Nothing to merge: the work of {} is already in {}.",
+            outcome.run_branch,
+            outcome.branch
+        ),
+    }
+    outln!(
+        "The run branch {} is kept; delete it with `git branch -D {}` when you no longer need it.",
+        outcome.run_branch,
+        outcome.run_branch
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 fn abort_command() -> Result<ExitCode> {
     let mut run = load_run()?;
     let outcome = ops::abort(&mut run)?;
@@ -885,7 +951,7 @@ fn report_outcome(run: &Run, outcome: NextOutcome) -> ExitCode {
         NextOutcome::Completed => {
             let state = &run.state;
             outln!("{}", Styler::for_stdout().ok("All phases done."));
-            outln!("To integrate the work:");
+            outln!("To integrate the work, run `phasewise merge` or:");
             outln!(
                 "  git switch {} && git merge --squash {} && git commit",
                 state.original_branch,
@@ -1071,7 +1137,7 @@ fn next_step_hint(run: &Run) -> String {
     let state = &run.state;
     match state.status {
         RunStatus::Completed => format!(
-            "Run completed. To integrate: git switch {} && git merge --squash {} && git commit",
+            "Run completed. To integrate: `phasewise merge` or git switch {} && git merge --squash {} && git commit",
             state.original_branch, state.run_branch
         ),
         RunStatus::Aborted => "Run aborted. Start a new one with `phasewise run`.".to_string(),

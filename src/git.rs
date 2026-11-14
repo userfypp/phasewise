@@ -265,6 +265,60 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
             .to_string())
     }
 
+    /// `git merge --squash <branch>`: applies the changes of `branch` to the
+    /// index and the working tree without committing. On a conflict it
+    /// returns the conflicting paths and leaves the tree as git left it; the
+    /// caller restores it. Any other failure is an error.
+    pub fn merge_squash(&self, branch: &str) -> Result<SquashResult> {
+        let args = ["merge", "--squash", branch];
+        let output = self.output(&args, None)?;
+        if output.status.success() {
+            return Ok(SquashResult::Clean);
+        }
+        if output.status.code() == Some(1) {
+            let conflicts = self.conflicted_paths()?;
+            if !conflicts.is_empty() {
+                return Ok(SquashResult::Conflict(conflicts));
+            }
+        }
+        Err(self.failure(&args, &output))
+    }
+
+    /// Paths with unresolved conflicts.
+    fn conflicted_paths(&self) -> Result<Vec<String>> {
+        let out = self.run(&["diff", "--name-only", "--diff-filter=U", "-z"])?;
+        Ok(out
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// True when the index differs from `HEAD`.
+    pub fn has_staged_changes(&self) -> Result<bool> {
+        let args = ["diff", "--cached", "--quiet"];
+        let output = self.output(&args, None)?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => Err(self.failure(&args, &output)),
+        }
+    }
+
+    /// Commits the index with `message` and returns the short SHA of the new
+    /// `HEAD`. This is the user's own commit: their hooks and signing apply.
+    pub fn commit_staged(&self, message: &str) -> Result<String> {
+        let args = ["commit", "-q", "-F", "-"];
+        let output = self.output(&args, Some(message))?;
+        if !output.status.success() {
+            return Err(self.failure(&args, &output));
+        }
+        Ok(self
+            .run(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string())
+    }
+
     pub fn reset_hard(&self, sha: &str) -> Result<()> {
         self.run(&["reset", "--hard", sha]).map(|_| ())
     }
@@ -461,6 +515,15 @@ fn lock_path_from_stderr(stderr: &str) -> Option<String> {
         })
         .map(|(i, c)| i + c.len_utf8())?;
     Some(head[start..].to_string())
+}
+
+/// How `Git::merge_squash` ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SquashResult {
+    /// The changes were applied (possibly none).
+    Clean,
+    /// These paths conflict.
+    Conflict(Vec<String>),
 }
 
 /// Added/removed line counts of one file; `None` for binary files.

@@ -80,6 +80,8 @@ pub struct RunView {
     pub run_branch: String,
     pub original_branch: String,
     pub active: bool,
+    /// Every phase is approved: the run can be merged.
+    pub completed: bool,
     pub phases: Vec<PhaseView>,
 }
 
@@ -126,6 +128,7 @@ pub fn load_run_view(run: &Run) -> RunView {
         run_branch: state.run_branch.clone(),
         original_branch: state.original_branch.clone(),
         active: state.status == RunStatus::Active,
+        completed: state.status == RunStatus::Completed,
         phases,
     }
 }

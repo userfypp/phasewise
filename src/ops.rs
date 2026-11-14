@@ -13,7 +13,7 @@ use crate::agent::{AgentEvent, LaunchOptions, agent_for};
 use crate::engine::{
     AgentSession, EngineEvent, PhaseContext, PhaseSettings, run_agent_session, run_phase,
 };
-use crate::git::Git;
+use crate::git::{Git, SquashResult};
 use crate::plan::{self, AgentKind, Plan};
 use crate::prompt;
 use crate::state::{
@@ -49,6 +49,18 @@ pub struct AbortOutcome {
     pub switched: bool,
     /// Commit holding uncommitted changes found on the run branch, if any.
     pub leftovers_sha: Option<String>,
+}
+
+/// What `merge` did, for the caller to report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeOutcome {
+    /// The branch the work was committed on (the run's original branch).
+    pub branch: String,
+    /// The run branch, which is kept.
+    pub run_branch: String,
+    /// Short SHA of the new commit; `None` when there was nothing to merge
+    /// (the work is already in the branch).
+    pub commit: Option<String>,
 }
 
 /// How `next` ended.
@@ -704,6 +716,105 @@ the run branch. Switch to any branch yourself with `git switch`, then run `phase
         current_branch,
         switched,
         leftovers_sha,
+    })
+}
+
+/// Checks that `merge` can run: the run is completed and the working tree is
+/// clean outside `.phasewise/`. Does not take the lock (the CLI calls it before
+/// its confirmation prompt); `merge` checks again under the lock.
+pub fn prepare_merge(run: &Run) -> Result<()> {
+    if run.state.status != RunStatus::Completed {
+        bail!(
+            "Run {} is not completed, so there is nothing to merge yet. Finish its phases with \
+`phasewise next`; `phasewise status` shows where the run is.",
+            run.state.run_id
+        );
+    }
+    let dirty = dirty_paths(&run.git)?;
+    if !dirty.is_empty() {
+        let listed: Vec<&str> = dirty
+            .iter()
+            .take(MAX_DIRTY_LISTED)
+            .map(String::as_str)
+            .collect();
+        let more = dirty.len().saturating_sub(MAX_DIRTY_LISTED);
+        let more = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        bail!(
+            "The working tree has uncommitted changes ({}{more}). Commit or stash them \
+(`git stash -u`), then run the merge again.",
+            listed.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Integrates a completed run: switches to the original branch, squashes the
+/// run branch into it and commits the result (the user's hooks and signing
+/// apply). When the squash conflicts, the tree is restored, the original
+/// branch is left as it was and the error names the files. Never deletes the
+/// run branch and never pushes.
+pub fn merge(run: &mut Run) -> Result<MergeOutcome> {
+    let _lock = lock_and_reload(run)?;
+    prepare_merge(run)?;
+    run.git.check_identity()?;
+    let original = run.state.original_branch.clone();
+    let run_branch = run.state.run_branch.clone();
+    if run.git.current_branch()?.as_deref() != Some(original.as_str()) {
+        run.git.switch(&original).map_err(|e| {
+            anyhow!(
+                "Cannot switch to `{original}`: {e:#}. Switch to it yourself with \
+`git switch {original}`, then run the merge again."
+            )
+        })?;
+    }
+    let manual = format!(
+        "git switch {original} && git merge --squash {run_branch}, fix the conflicts, \
+then `git add` the files and `git commit`"
+    );
+    match run.git.merge_squash(&run_branch)? {
+        SquashResult::Clean => {}
+        SquashResult::Conflict(files) => {
+            // The tree was clean before the merge, so nothing of the user's is lost.
+            run.git.reset_hard("HEAD")?;
+            bail!(
+                "Merging {run_branch} into {original} conflicts in: {}. Nothing was changed: \
+you are on {original} with a clean working tree and {run_branch} is kept. To resolve it by \
+hand, run {manual}.",
+                files.join(", ")
+            );
+        }
+    }
+    let commit = if run.git.has_staged_changes()? {
+        let title = run
+            .state
+            .plan_title
+            .clone()
+            .or_else(|| run.plan.title.clone())
+            .and_then(|t| t.lines().next().map(|l| l.trim().to_string()))
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| run.state.run_id.clone());
+        let message = format!(
+            "phasewise: {title}\n\nPhasewise-Run: {}\n",
+            run.state.run_id
+        );
+        let sha = run.git.commit_staged(&message).map_err(|e| {
+            anyhow!(
+                "{e:#} The changes of {run_branch} are staged on {original}. Fix the problem and \
+run `git commit`, or discard them with `git reset --hard`."
+            )
+        })?;
+        Some(sha)
+    } else {
+        None
+    };
+    Ok(MergeOutcome {
+        branch: original,
+        run_branch,
+        commit,
     })
 }
 

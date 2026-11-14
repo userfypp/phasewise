@@ -449,6 +449,16 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
             "Cancel",
             *row,
         ),
+        Mode::ConfirmMerge(row) => confirm_popup(
+            &format!("Merge run {}?", view.run_id),
+            &format!(
+                "The work of {} is squashed into {} and committed there. The run branch is kept and nothing is pushed.",
+                view.run_branch, view.original_branch
+            ),
+            "Merge it",
+            "Cancel",
+            *row,
+        ),
         Mode::Help => shortcuts_popup(&App::shortcuts()),
         Mode::Note(buffer) => input_popup(
             &format!("Retry phase {}", retry_target(app)),
@@ -502,6 +512,7 @@ pub(super) mod tests {
             run_branch: "phasewise/20260101-120000".into(),
             original_branch: "main".into(),
             active: true,
+            completed: false,
             phases: vec![
                 phase(1, "Scaffold the project", PhaseStatus::Done, true),
                 PhaseView {
@@ -676,6 +687,14 @@ pub(super) mod tests {
         let text = format!("{}", terminal.backend());
         assert!(text.contains("❯ 2. Cancel"), "{text}");
         insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn merge_confirmation_popup() {
+        let mut app = app();
+        app.view.completed = true;
+        app.mode = Mode::ConfirmMerge(0);
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
     #[test]

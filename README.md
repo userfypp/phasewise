@@ -39,7 +39,7 @@ Hand an agent a big plan in one go and you get one enormous change to review, wi
 1. You describe what you want in a sentence. The agent reads your project, without changing it, and writes `phasewise.md`. Or you write the plan yourself.
 2. Each phase runs headless on the branch `phasewise/<run-id>`, and then your checks run. If one fails, the agent gets its output and tries again.
 3. You read the diff, the agent's log and the checks, then approve the phase, retry it with a note, or roll back.
-4. When the last phase is approved, you merge the run branch into yours with the command phasewise prints.
+4. When the last phase is approved, you merge the run branch into yours with `phasewise merge` (or `m` on the run screen), or by hand with the command phasewise prints.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/run-dark.svg">
@@ -72,7 +72,7 @@ Every step is also a command: `phasewise plan "…"`, `phasewise run`, `phasewis
 ## Good to know
 
 - The agent works without permission prompts, as your user and with your environment. The run branch protects your history, not your machine: read [Security](SECURITY.md) before running a plan you did not write.
-- phasewise never pushes, never deletes branches and makes no network connections of its own. It has no telemetry and never will.
+- phasewise merges a run only when you ask with `merge` or `m`. It never pushes, never deletes branches and makes no network connections of its own. It has no telemetry and never will.
 - Agents cost money. phasewise shows Claude Code's cost per phase; Codex does not report one.
 - Tested with Claude Code 2.1.325 and Codex CLI 0.160.0. Agent CLIs change often, so [Agents](docs/agents.md) lists the exact command lines phasewise uses.
 - Windows is not supported.

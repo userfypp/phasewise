@@ -433,3 +433,123 @@ fn abort_explains_what_to_do_when_the_original_branch_is_gone() {
     env.ok(&["abort"], &[]);
     assert_eq!(env.state()["status"], "aborted");
 }
+
+/// A repository whose run is completed; HEAD is on the run branch.
+fn completed_env() -> Env {
+    let env = Env::new();
+    env.ok(&["run", "--auto"], &[]);
+    env.ok(&["next"], &[]);
+    assert_eq!(env.state()["status"], "completed");
+    env
+}
+
+#[test]
+fn merge_commits_the_squashed_run_on_the_original_branch_and_keeps_the_run_branch() {
+    let env = completed_env();
+    let run_id = env.run_id();
+    let run_branch = format!("phasewise/{run_id}");
+    let out = env.ok(&["merge", "--yes"], &[]);
+    assert!(out.stdout.contains("Committed"), "{}", out.stdout);
+    assert!(out.stdout.contains("on main"), "{}", out.stdout);
+    assert!(out.stdout.contains("is kept"), "{}", out.stdout);
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), "main");
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD~1"]), env.main_sha);
+    let message = env.repo.git_trim(&["log", "-1", "--format=%B"]);
+    assert!(message.starts_with("phasewise: Demo plan"), "{message}");
+    assert!(
+        message.contains(&format!("Phasewise-Run: {run_id}")),
+        "{message}"
+    );
+    assert_eq!(env.repo.read("phase-3.txt"), "phase 3\n");
+    assert!(env.repo.git(&["status", "--porcelain"]).trim().is_empty());
+    assert!(
+        env.repo
+            .git(&["branch", "--list", &run_branch])
+            .contains(&run_branch)
+    );
+    // The history of main is one commit longer, not the phases' checkpoints.
+    assert_eq!(
+        env.repo.git_trim(&["rev-list", "--count", "main"]),
+        env.repo
+            .git_trim(&["rev-list", "--count", &env.main_sha])
+            .parse::<u32>()
+            .expect("count")
+            .saturating_add(1)
+            .to_string()
+    );
+}
+
+#[test]
+fn merging_twice_says_there_is_nothing_to_merge() {
+    let env = completed_env();
+    env.ok(&["merge", "--yes"], &[]);
+    let head = env.repo.git_trim(&["rev-parse", "HEAD"]);
+    let out = env.ok(&["merge", "--yes"], &[]);
+    assert!(out.stdout.contains("Nothing to merge"), "{}", out.stdout);
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn merge_without_yes_needs_a_terminal() {
+    let env = completed_env();
+    let out = env.exec(&["merge"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("Pass --yes"), "{}", out.stderr);
+    assert_eq!(env.repo.git_trim(&["rev-parse", "main"]), env.main_sha);
+}
+
+#[test]
+fn merge_is_refused_while_the_run_is_not_completed() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let out = env.exec(&["merge", "--yes"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("not completed"), "{}", out.stderr);
+    assert_eq!(env.statuses()[0], "awaiting_review");
+    env.check_invariants();
+}
+
+#[test]
+fn merge_is_refused_with_uncommitted_changes() {
+    let env = completed_env();
+    env.repo.write("notes.txt", "mine\n");
+    let out = env.exec(&["merge", "--yes"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(
+        out.stderr.contains("notes.txt") && out.stderr.contains("Commit or stash"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(
+        env.repo.git_trim(&["branch", "--show-current"]),
+        format!("phasewise/{}", env.run_id())
+    );
+    assert_eq!(env.repo.read("notes.txt"), "mine\n");
+    env.check_invariants();
+}
+
+#[test]
+fn a_conflicting_merge_restores_the_tree_and_leaves_the_original_branch_alone() {
+    let env = completed_env();
+    let run_branch = format!("phasewise/{}", env.run_id());
+    env.repo.git(&["switch", "main"]);
+    env.repo
+        .commit_file("phase-1.txt", "mine\n", "add phase-1 by hand");
+    let main_sha = env.repo.git_trim(&["rev-parse", "main"]);
+    let out = env.exec(&["merge", "--yes"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("conflicts in"), "{}", out.stderr);
+    assert!(out.stderr.contains("phase-1.txt"), "{}", out.stderr);
+    assert!(out.stderr.contains("git merge --squash"), "{}", out.stderr);
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), "main");
+    assert_eq!(env.repo.git_trim(&["rev-parse", "main"]), main_sha);
+    assert!(env.repo.git(&["status", "--porcelain"]).trim().is_empty());
+    assert_eq!(env.repo.read("phase-1.txt"), "mine\n");
+    assert!(!env.exists("phase-3.txt"));
+    assert!(
+        env.repo
+            .git(&["branch", "--list", &run_branch])
+            .contains(&run_branch)
+    );
+    assert_eq!(env.state()["status"], "completed");
+}

@@ -39,7 +39,8 @@ that is not confirmed is a warning, not an error.
    branch and stops.
 4. **Review.** You look at the diff, the agent's log and the check output, then
    approve the phase (the next one starts), retry it with a note, or roll back.
-5. **Merge.** When every phase is done, you merge the run branch into yours.
+5. **Merge.** When every phase is done, you merge the run branch into yours:
+   phasewise can do it when you ask (`merge`, or `m` on the run screen).
 
 Your own branch never changes during a run, and every phase is a commit you can
 go back to.
@@ -187,12 +188,13 @@ without a key. Then decide:
 | `n` | Approve the phase and run the next one. |
 | `r` | Retry: go back to the checkpoint before the phase and run it again in a new session. You can add a note for the agent. |
 | `b` | Roll back to the selected phase's checkpoint: later phases are discarded and become pending again. |
+| `m` | Merge a completed run into your branch (see Finishing a run). |
 | `x` | Interrupt the phase that is running. |
 | `A` | Abandon the run (see below). |
 | `esc` | Back to the home screen. The run keeps going if a phase is running. |
 
 The same actions exist as commands: `phasewise next`, `retry --note "…"`,
-`rollback N`, `diff [N]` and `status`.
+`rollback N`, `merge`, `diff [N]` and `status`.
 
 **Abandoning a run** stops it for good. Uncommitted changes are saved in a
 commit on the run branch, which is kept, and you go back to your original
@@ -200,16 +202,26 @@ branch. From the command line: `phasewise abort`.
 
 ## Finishing a run
 
-When the last phase is approved, the run is complete and phasewise shows how to
-bring the work into your branch:
+When the last phase is approved, the run is complete. Press `m` on the run
+screen, or run `phasewise merge` (`--yes` skips the question), to bring the work
+into your branch. phasewise switches to your original branch, squashes the run
+branch into it and commits the result as `phasewise: <plan title>` with a
+`Phasewise-Run: <run-id>` trailer. Your git hooks and signing apply, as for any
+commit of yours.
+
+- The working tree must be clean (outside `.phasewise/`): commit or stash first.
+- If the work is already in your branch (you merged it before), phasewise says
+  there is nothing to merge.
+- If the squash conflicts, phasewise restores the tree, stays on your branch and
+  names the conflicting files. Resolve it by hand:
 
 ```sh
 git switch main && git merge --squash phasewise/<run-id> && git commit
 ```
 
-(with your original branch instead of `main`). phasewise never merges, pushes
-or deletes branches for you. Delete the run branch yourself when you no longer
-need it.
+(with your original branch instead of `main`). phasewise only merges when you
+ask with `merge` or `m`, and it never pushes or deletes branches. The run
+branch is kept: delete it yourself when you no longer need it.
 
 ## Models and effort
 
@@ -261,6 +273,7 @@ terminal UI.
 | `phasewise next` | Approves the phase awaiting review and runs the next one. `--auto`, `--model`, `--effort`. |
 | `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
+| `phasewise merge` | Squashes a completed run into the original branch and commits it. `--yes` skips the question. |
 | `phasewise status` | Table of phases: state, attempts, files, cost, model. |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |
@@ -332,8 +345,8 @@ plan · `a` agent · `m` model · `e` effort · `o` last run · `?` all keys · 
 quit. While a plan is being written: `esc` stops it.
 
 **Run screen**: `j`/`k` or arrows select a phase · `tab` next view ·
-`PgUp`/`PgDn` scroll · `n` approve · `r` retry · `b` roll back · `x` interrupt
-· `A` abandon · `esc` home · `?` all keys · `q` quit.
+`PgUp`/`PgDn` scroll · `n` approve · `r` retry · `b` roll back · `m` merge a
+completed run · `x` interrupt · `A` abandon · `esc` home · `?` all keys · `q` quit.
 
 **Lists and questions**: arrows or `j`/`k` move, `enter` or the row's number
 chooses, `esc` cancels; `y`/`n` answer confirmations. In text fields, `Ctrl-U`

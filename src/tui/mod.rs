@@ -28,7 +28,8 @@ use crate::agent::{ModelInfo, agent_for};
 use crate::display::{failure_kind_label, first_line_short, plan_event_line, plan_header};
 use crate::engine::EngineEvent;
 use crate::ops::{
-    self, AbortOutcome, NextOutcome, Overrides, PlanEvent, PlanOutcome, PlanRequest, Run,
+    self, AbortOutcome, MergeOutcome, NextOutcome, Overrides, PlanEvent, PlanOutcome, PlanRequest,
+    Run,
 };
 use crate::plan::AgentKind;
 use crate::process;
@@ -133,9 +134,17 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// What a run-screen worker produced.
+enum Finished {
+    /// A phase cycle (`next`, `retry`).
+    Phase(NextOutcome),
+    /// The run was integrated (`merge`).
+    Merged(MergeOutcome),
+}
+
 /// An engine call running in its own thread; it owns its own `Run`.
 struct Worker {
-    handle: JoinHandle<Result<NextOutcome>>,
+    handle: JoinHandle<Result<Finished>>,
     cancel: Arc<AtomicBool>,
     events: Receiver<EngineEvent>,
 }
@@ -876,6 +885,12 @@ impl Tui<'_> {
                 ops::retry(run, note.as_deref(), &ops::Overrides::default(), tx, cancel)
                     .map(NextOutcome::Ran)
             }),
+            Command::Merge => {
+                self.spawn_finished(|run, _tx, _cancel| ops::merge(run).map(Finished::Merged));
+                if self.worker.is_some() {
+                    self.app.message = Some(Notice::info("Merging…"));
+                }
+            }
             Command::Rollback(k) => self.rollback(k),
             Command::Abandon => self.abandon(),
         }
@@ -891,6 +906,15 @@ impl Tui<'_> {
     fn spawn<F>(&mut self, work: F)
     where
         F: FnOnce(&mut Run, &mpsc::Sender<EngineEvent>, &AtomicBool) -> Result<NextOutcome>
+            + Send
+            + 'static,
+    {
+        self.spawn_finished(move |run, tx, cancel| work(run, tx, cancel).map(Finished::Phase));
+    }
+
+    fn spawn_finished<F>(&mut self, work: F)
+    where
+        F: FnOnce(&mut Run, &mpsc::Sender<EngineEvent>, &AtomicBool) -> Result<Finished>
             + Send
             + 'static,
     {
@@ -996,7 +1020,11 @@ impl Tui<'_> {
         });
         self.app.running = None;
         self.refresh();
-        self.app.message = Some(outcome_notice(&result, &self.run.state));
+        self.app.message = Some(match result {
+            Ok(Finished::Merged(outcome)) => merge_notice(&outcome),
+            Ok(Finished::Phase(outcome)) => outcome_notice(&Ok(outcome), &self.run.state),
+            Err(err) => outcome_notice(&Err(err), &self.run.state),
+        });
     }
 
     /// Reloads the run and the caches of the selected phase.
@@ -1059,12 +1087,26 @@ fn abandon_notice(outcome: &AbortOutcome, state: &RunState) -> Notice {
     ))
 }
 
+/// The message shown when a merge ends.
+fn merge_notice(outcome: &MergeOutcome) -> Notice {
+    match &outcome.commit {
+        Some(sha) => Notice::ok(format!(
+            "Merged: committed {sha} on {}. The run branch {} is kept.",
+            outcome.branch, outcome.run_branch
+        )),
+        None => Notice::info(format!(
+            "Nothing to merge: the work of {} is already in {}.",
+            outcome.run_branch, outcome.branch
+        )),
+    }
+}
+
 /// The message shown when a worker ends.
 fn outcome_notice(result: &Result<NextOutcome>, state: &RunState) -> Notice {
     match result {
         Err(err) => Notice::error(format!("Error: {err}")),
         Ok(NextOutcome::Completed) => Notice::ok(format!(
-            "All phases done. To integrate: git switch {} && git merge --squash {} && git commit",
+            "All phases done. Press m to merge, or: git switch {} && git merge --squash {} && git commit",
             state.original_branch, state.run_branch
         )),
         Ok(NextOutcome::Ran(PhaseStatus::Failed)) => {
@@ -1176,11 +1218,28 @@ mod tests {
     fn completed_message_has_the_merge_hint() {
         let s = state(vec![phase(1, PhaseStatus::Done, None)]);
         let msg = outcome_notice(&Ok(NextOutcome::Completed), &s);
-        assert!(msg.text.contains("All phases done"));
+        assert!(msg.text.contains("All phases done. Press m to merge"));
         assert!(
             msg.text
                 .contains("git switch main && git merge --squash phasewise/r && git commit")
         );
+    }
+
+    #[test]
+    fn merge_message_says_what_was_committed_or_that_nothing_was() {
+        let mut outcome = MergeOutcome {
+            branch: "main".into(),
+            run_branch: "phasewise/r".into(),
+            commit: Some("abc1234".into()),
+        };
+        let done = merge_notice(&outcome);
+        assert_eq!(done.level, shared::Level::Ok);
+        assert!(done.text.contains("abc1234 on main"), "{}", done.text);
+        assert!(done.text.contains("phasewise/r is kept"), "{}", done.text);
+        outcome.commit = None;
+        let nothing = merge_notice(&outcome);
+        assert_eq!(nothing.level, shared::Level::Info);
+        assert!(nothing.text.starts_with("Nothing to merge"));
     }
 
     #[test]

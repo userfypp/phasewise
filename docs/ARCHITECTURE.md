@@ -13,7 +13,7 @@ on-disk formats or the invariants below updates it in the same commit. For what 
                   │                                  │
                   └────────────────┬─────────────────┘
                                    ▼
-                                ops.rs            start, next, retry, rollback,
+                                ops.rs            start, next, retry, rollback, merge,
                                    │              abort, commit the plan, plan
                                    ▼
                               engine.rs           one phase: agent → checks → checkpoint
@@ -44,7 +44,7 @@ check runs as a child process in its own process group.
 |---|---|
 | `main.rs` | Only calls `cli::main()`. |
 | `cli.rs` | clap definitions, dispatch, printing events, exit codes. |
-| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `rollback`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. |
+| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. |
 | `engine.rs` | One phase cycle (`run_phase`) and the agent-following loop shared with planning (`run_agent_session`): spawn, stdin, reader thread, logs, timeout, cancel, leftovers. |
 | `plan.rs` | The plan model and parser (`pulldown-cmark` and `toml`), validation with line numbers, model and effort values. |
 | `prompt.rs` | Every text sent to an agent, and the extraction of a plan from an answer. Pure functions. |
@@ -125,7 +125,20 @@ phases.
 `ops::next` approves the phase awaiting review (it becomes `done`) and runs the
 next pending one. With `--auto` it keeps going until a phase fails; the last
 phase always waits for review. When the last phase is approved, the run is
-`completed`. Integrating it is left to the user, who is told the command:
+`completed`. Integrating it is left to the user, who is told `phasewise merge`
+and the equivalent commands.
+
+`ops::merge` integrates a completed run, and only when the user asks
+(`phasewise merge`, `m` on the run screen; the TUI runs it on a worker thread).
+Under the run lock it requires status `completed` and a clean tree outside
+`.phasewise/`, switches to the original branch, runs `git merge --squash <run
+branch>` and commits the result (`phasewise: <plan title>` with a
+`Phasewise-Run` trailer; the user's hooks and signing apply). If nothing is
+staged, the work is already in the branch and no commit is made. On a conflict
+it runs `git reset --hard HEAD` (safe: the tree was verified clean), stays on
+the original branch and fails naming the files. The run branch is kept, nothing
+is pushed and `state.json` is unchanged: a merged run stays `completed`. The
+manual route still works:
 
 ```sh
 git switch <original-branch> && git merge --squash phasewise/<run-id> && git commit
