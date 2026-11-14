@@ -3,19 +3,9 @@ description: An idea that would make phasewise more useful.
 labels: ["enhancement"]
 body:
   - type: textarea
-    id: problem
+    id: idea
     attributes:
-      label: The problem
-      description: What are you trying to do, and what gets in the way today?
+      label: What would you like?
+      description: What you are trying to do and what gets in the way today. A proposal is welcome but not needed.
     validations:
       required: true
-  - type: textarea
-    id: proposal
-    attributes:
-      label: What you propose
-      description: How it could work from your point of view. Check docs/ROADMAP.md first.
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives
-      description: Workarounds you use now, or other ways to solve it.
