@@ -4,6 +4,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -12,9 +13,9 @@ use super::home::{Home, Mode, ModelItem, ModelsState, Probe};
 use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, PickerRow, accent, bold, confirm_popup, dim, draw_too_small,
-    duration_text, elapsed_since, error_popup, event_text, footer_line, input_popup, margin,
-    notice_line, pad_to, picker_lines, render_card, render_popup, role_style, shortcuts_popup,
-    text_width, truncate, wrap_text,
+    duration_text, elapsed_since, error_popup, event_text, footer_line, input_popup, limit_spans,
+    margin, notice_line, pad_to, picker_lines, render_card, render_popup, role_style,
+    shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{model_name, phase_count, status_label};
 use crate::plan::AgentKind;
@@ -139,7 +140,7 @@ fn document(home: &Home, width: usize, phase_limit: usize) -> Vec<Line<'static>>
         sections.push(run_card(home, run, width));
     } else {
         sections.push(plan_section(home, width, phase_limit));
-        sections.push(settings_section(home));
+        sections.push(settings_section(home, width));
         sections.push(notices(home));
     }
     sections.push(activity(home, width));
@@ -349,8 +350,9 @@ fn version_number(text: &str) -> &str {
         .unwrap_or(text)
 }
 
-/// `Agent`, `Model` and `Effort`, aligned.
-fn settings_section(home: &Home) -> Vec<Line<'static>> {
+/// `Agent`, `Model` and `Effort`, aligned; then `Limits` when the selected
+/// agent is Claude Code and it has reported some.
+fn settings_section(home: &Home, width: usize) -> Vec<Line<'static>> {
     let label = |text: &str| Span::styled(format!("{text:<8}"), dim());
     let mut agent = vec![label("Agent"), Span::raw(agent_title(home.agent))];
     match home.probe(home.agent) {
@@ -361,7 +363,7 @@ fn settings_section(home: &Home) -> Vec<Line<'static>> {
     let (plan_model, plan_effort) = plan_values(home);
     let model = home.model.as_deref().map(|m| model_name(home.agent, m));
     let plan_model = plan_model.map(|m| model_name(home.agent, m));
-    vec![
+    let mut lines = vec![
         Line::from(agent),
         setting("Model", model, plan_model, home.agent),
         setting(
@@ -370,7 +372,15 @@ fn settings_section(home: &Home) -> Vec<Line<'static>> {
             plan_effort.map(str::to_string),
             home.agent,
         ),
-    ]
+    ];
+    if home.agent == AgentKind::Claude
+        && let Some(limits) = home.data.limits.as_ref().filter(|l| l.agent == home.agent)
+    {
+        let mut spans = vec![label("Limits")];
+        spans.extend(limit_spans(limits, Style::new(), width.saturating_sub(8)));
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 /// The plan's model and effort, when the plan is for the selected agent.
@@ -642,6 +652,7 @@ pub(super) mod tests {
             plan_uncommitted: false,
             plan_rel: "phasewise.md".into(),
             run: None,
+            limits: None,
         }
     }
 
@@ -670,6 +681,30 @@ pub(super) mod tests {
                 ),
             ],
         })
+    }
+
+    /// Limits seen a minute before the fixed test clock (a Saturday, 12:40 UTC).
+    pub(in crate::tui) fn sample_limits(warning: bool) -> crate::state::RateLimits {
+        const NOW: i64 = 1_794_660_000;
+        let window =
+            |name: &str, utilization: f64, resets_at: i64, status: &str| crate::agent::RateWindow {
+                name: name.into(),
+                utilization: Some(utilization),
+                resets_at: Some(resets_at),
+                status: status.into(),
+            };
+        crate::state::RateLimits {
+            agent: AgentKind::Claude,
+            seen_at: NOW - 60,
+            windows: vec![
+                if warning {
+                    window("five_hour", 0.91, NOW + 3 * 3600, "allowed_warning")
+                } else {
+                    window("five_hour", 0.36, NOW + 3 * 3600, "allowed")
+                },
+                window("seven_day", 0.49, NOW + 4 * 86400, "allowed"),
+            ],
+        }
     }
 
     pub(in crate::tui) fn home(plan: PlanState) -> Home {
@@ -763,6 +798,21 @@ pub(super) mod tests {
         let mut home = home(valid_plan());
         home.data.plan_uncommitted = true;
         home.effort = Some("high".into());
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn valid_plan_with_limits() {
+        let mut home = home(valid_plan());
+        home.data.limits = Some(sample_limits(false));
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn limits_are_hidden_for_another_agent() {
+        let mut home = home(valid_plan());
+        home.data.limits = Some(sample_limits(false));
+        press(&mut home, 'a');
         insta::assert_snapshot!(render(&home).backend());
     }
 

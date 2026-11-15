@@ -12,8 +12,8 @@ use super::data::{DiffView, LogLine, PhaseView};
 use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, confirm_popup, dim, dim_join, draw_too_small,
-    elapsed_since, event_spans, footer_line, input_popup, line_width, margin, notice_line,
-    render_popup, role_style, shortcuts_popup, text_width, truncate, wrap_text,
+    elapsed_since, event_spans, footer_line, input_popup, limit_spans, line_width, margin,
+    notice_line, render_popup, role_style, shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -31,7 +31,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_too_small(frame, area);
         return;
     }
-    let [header, _, body, message, footer] = Layout::vertical([
+    let [header, limits, body, message, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
@@ -48,6 +48,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(body);
     draw_header(frame, app, margin(header));
+    if let Some(l) = &app.view.limits {
+        let area = margin(limits);
+        let spans = limit_spans(l, dim(), usize::from(area.width));
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
     draw_phases(frame, app, list);
     draw_rule(frame, rule);
     draw_detail(frame, app, detail);
@@ -515,6 +520,7 @@ pub(super) mod tests {
             original_branch: "main".into(),
             active: true,
             completed: false,
+            limits: None,
             phases: vec![
                 phase(1, "Scaffold the project", PhaseStatus::Done, true),
                 PhaseView {
@@ -559,6 +565,27 @@ pub(super) mod tests {
         let mut app = app();
         with_diff(&mut app);
         insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn limits_line_under_the_header() {
+        let mut app = app();
+        app.view.limits = Some(crate::tui::home_view::tests::sample_limits(true));
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn limits_line_leaves_out_what_does_not_fit() {
+        let limits = crate::tui::home_view::tests::sample_limits(true);
+        let text = |room| -> String {
+            limit_spans(&limits, dim(), room)
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect()
+        };
+        assert_eq!(text(60), "5 h 91 % · allowed_warning · resets 15:40");
+        assert_eq!(text(20), "5 h 91 % · allowed_…");
+        assert!(text(100).ends_with("7 d 49 % · resets Wed 12:40"));
     }
 
     #[test]

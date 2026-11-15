@@ -10,7 +10,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use super::shared::{FooterItem, Level, Notice, ShortcutGroups, item};
-use crate::display::EventLine;
+use crate::display::{EventLine, limit_parts, limits_clock};
+use crate::state::RateLimits;
 use crate::style::Role;
 
 pub const MIN_WIDTH: u16 = 80;
@@ -232,6 +233,36 @@ pub fn event_text(line: &EventLine) -> String {
 /// Metadata joined by a dim ` · `.
 pub fn dim_join(parts: &[String]) -> Span<'static> {
     Span::styled(parts.join(" · "), dim())
+}
+
+/// The limits line as spans, in `base` style; a window with a status other
+/// than `allowed` is yellow. Parts that do not fit in `room` columns are left
+/// out (the first is cut instead).
+pub fn limit_spans(limits: &RateLimits, base: Style, room: usize) -> Vec<Span<'static>> {
+    const GAP: &str = "   ";
+    let (now, tz) = limits_clock();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for part in limit_parts(limits, now, &tz) {
+        let style = if part.warn {
+            role_style(Role::Warn)
+        } else {
+            base
+        };
+        let gap = if spans.is_empty() { 0 } else { GAP.len() };
+        if spans.is_empty() {
+            let text = truncate(&part.text, room);
+            used = text_width(&text);
+            spans.push(Span::styled(text, style));
+        } else if used + gap + text_width(&part.text) <= room {
+            used += gap + text_width(&part.text);
+            spans.push(Span::styled(GAP, base));
+            spans.push(Span::styled(part.text, style));
+        } else {
+            break;
+        }
+    }
+    spans
 }
 
 /// A message with its glyph, in the colour of its level.

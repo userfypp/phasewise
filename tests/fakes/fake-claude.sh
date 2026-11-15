@@ -117,6 +117,7 @@ for arg in "$@"; do
     prev=$arg
 done
 printf '{"type":"system","subtype":"init","session_id":"%s","model":"%s"}\n' "$sid" "$model"
+printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":4102444800,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.36,"resetsAt":4102444800,"status":"allowed"},"seven_day":{"utilization":0.49,"resetsAt":4102531200,"status":"allowed_warning"}}},"session_id":"%s"}\n' "$sid"
 
 if [ "$mode" = "slow" ]; then
     exec sleep 600

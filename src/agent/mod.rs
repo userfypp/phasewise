@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 
 use crate::plan::AgentKind;
 use crate::process::spawn_in_group;
@@ -33,6 +34,19 @@ pub struct ModelInfo {
     pub name: String,
     pub description: String,
     pub efforts: Vec<String>,
+}
+
+/// One usage-limit window as the agent reported it (Claude Code only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RateWindow {
+    /// The agent's name for the window, e.g. `five_hour` or `seven_day`.
+    pub name: String,
+    /// Share of the window used, from 0 to 1, when the agent says so.
+    pub utilization: Option<f64>,
+    /// When the window resets, in Unix seconds.
+    pub resets_at: Option<i64>,
+    /// `allowed`, `allowed_warning` or anything else the agent reports.
+    pub status: String,
 }
 
 /// What the agent reported, independent of the agent.
@@ -68,6 +82,8 @@ pub enum AgentEvent {
         summary: String,
         cost_usd: Option<f64>,
     },
+    /// The agent's usage-limit windows, as of now.
+    RateLimits(Vec<RateWindow>),
 }
 
 /// Translates stdout lines into events. Never fails: anything it does not

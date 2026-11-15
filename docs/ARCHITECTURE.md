@@ -183,6 +183,7 @@ nothing else).
 ```text
 <repo>/.phasewise/                     excluded through .git/info/exclude
 ├── current                            id of the current run
+├── rate-limits.json                   latest usage limits the agent reported
 ├── runs/<run-id>/
 │   ├── state.json                     the run's state
 │   ├── plan.md                        the plan as it was when the run started
@@ -205,6 +206,12 @@ attempts, session id, checkpoint SHA, the agent's final message (at most 2000
 characters), cost, start and end times, the failure (`kind` and `detail`), the
 model and effort requested, and the model the agent reported. New fields are
 optional, so older files keep loading; `schema_version` stays 1.
+
+`rate-limits.json` is per repository, not per run:
+`{"agent": "claude", "seen_at": <unix seconds>, "windows": [{"name", "utilization", "resets_at", "status"}]}`.
+The engine writes it (atomically, errors ignored) when a `RateLimits` agent
+event differs from what is stored or the stored copy is over a minute old; the
+CLI and the TUI only read it.
 
 ## Invariants
 

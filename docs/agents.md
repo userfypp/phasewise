@@ -89,9 +89,9 @@ first answer has no valid plan.
 | `system`/`api_retry` | A retry notice (`attempt`, `max_retries`, `error`). |
 | `system`/`permission_denied` and the result's `permission_denials` | A permission-denied notice, once per tool use id. |
 | `result` | The end of the attempt. It succeeded when `subtype` is `success` and `is_error` is false. The summary is `result`, or the `errors` list on error subtypes. The cost is `total_cost_usd`. |
+| `rate_limit_event` | The usage limits. From `rate_limit_info.unifiedWindows` (a map of window name, such as `five_hour` or `seven_day`, to `utilization` from 0 to 1, `resetsAt` in Unix seconds and `status`), or, when that is absent, the single window `rateLimitType` with the top-level `resetsAt` and no utilization. A `status` that is not `allowed` (for example `allowed_warning`) is shown as it comes. phasewise keeps the latest values in `.phasewise/rate-limits.json`; the home screen, the run screen and `phasewise status` show them. |
 
-Everything else is ignored. Real runs also emitted `rate_limit_event` and
-`system`/`thinking_tokens`.
+Everything else is ignored. Real runs also emitted `system`/`thinking_tokens`.
 
 ### Login
 
@@ -170,7 +170,8 @@ which the read-only sandbox allows.
 | `turn.failed` | The end of the attempt, failed, with `error.message`. |
 | `error` | An error line. |
 
-`reasoning`, `todo_list` and everything else are ignored.
+`reasoning`, `todo_list` and everything else are ignored. Codex reports no
+usage limits in its event stream, so phasewise shows none for it.
 
 ### Models and effort
 

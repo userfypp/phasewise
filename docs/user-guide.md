@@ -257,6 +257,25 @@ thinking, time and cost. `phasewise models` prints both lists. After a phase
 runs, the run screen and `phasewise status` show the model Claude Code actually
 used.
 
+### Usage limits
+
+Claude Code reports its usage limits (the five-hour and seven-day windows) in
+the stream of every phase. phasewise keeps the latest values and shows them as
+`5 h 36 % · resets 23:00   7 d 49 % · resets Thu 12:00`, in local time:
+
+- on the home screen, as a `Limits` line under Agent, Model and Effort, while
+  Claude Code is the selected agent;
+- on the run screen, under the header;
+- in `phasewise status`, as a `Limits:` line, and in `status --json` as
+  `limits` and `limits_seen_at` (`null` when there are none).
+
+These are the last values Claude Code reported during a phase, not a live
+query: nothing is asked of Claude Code to show them. A window whose reset time
+has passed shows `reset` instead of a percentage. A status other than
+`allowed` (for example `allowed_warning`) is shown after the percentage. Values
+older than ten minutes end with `seen 14:02`. Codex reports no limits, so none
+are shown for it.
+
 ## Commands
 
 Everything the screens do is also a command, for scripts and for use without a
@@ -274,7 +293,7 @@ terminal UI.
 | `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
 | `phasewise merge` | Squashes a completed run into the original branch and commits it. `--yes` skips the question. |
-| `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set) and a table of phases: state, attempts, files, cost, model. `--json` prints the run as JSON for scripts (`null` when there is no run). |
+| `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set), the last [usage limits](#usage-limits) Claude Code reported, and a table of phases: state, attempts, files, cost, model. `--json` prints the run as JSON for scripts (`null` when there is no run). |
 | `phasewise logs [N]` | Prints what happened in phase N (default: the last one that started): result, failure, the agent's summary and the paths of its logs. |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |

@@ -1,0 +1,28 @@
+---
+source: src/tui/home_view.rs
+expression: render(&home).backend()
+---
+" ╭──────────────────────────────────────────╮                                                       "
+" │ ✻ phasewise 0.3.0                        │                                                       "
+" │   demo · main                            │                                                       "
+" ╰──────────────────────────────────────────╯                                                       "
+"                                                                                                    "
+" Demo plan                                                                                          "
+" phasewise.md · 3 phases                                                                            "
+"    1  Scaffold the project                       2 checks                                          "
+"    2  Add the parser                             1 check                                           "
+"    3  Write the docs and the long release not…   no checks                                         "
+"                                                                                                    "
+" Agent   Codex not installed                                                                        "
+" Model   Default · Codex's choice                                                                   "
+" Effort  Default · Codex's choice                                                                   "
+"                                                                                                    "
+" enter start · p new plan · m model · a agent · e effort · q quit · ? shortcuts                     "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "

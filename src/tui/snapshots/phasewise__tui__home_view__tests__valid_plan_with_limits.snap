@@ -1,0 +1,28 @@
+---
+source: src/tui/home_view.rs
+expression: render(&home).backend()
+---
+" ╭──────────────────────────────────────────╮                                                       "
+" │ ✻ phasewise 0.3.0                        │                                                       "
+" │   demo · main                            │                                                       "
+" ╰──────────────────────────────────────────╯                                                       "
+"                                                                                                    "
+" Demo plan                                                                                          "
+" phasewise.md · 3 phases                                                                            "
+"    1  Scaffold the project                       2 checks · sonnet                                 "
+"    2  Add the parser                             1 check · opus                                    "
+"    3  Write the docs and the long release not…   no checks · sonnet                                "
+"                                                                                                    "
+" Agent   Claude Code 2.1.325                                                                        "
+" Model   sonnet · from the plan                                                                     "
+" Effort  Default · Claude Code's choice                                                             "
+" Limits  5 h 36 % · resets 15:40   7 d 49 % · resets Wed 12:40                                      "
+"                                                                                                    "
+" enter start · p new plan · m model · a agent · e effort · q quit · ? shortcuts                     "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "

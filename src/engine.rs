@@ -18,7 +18,9 @@ use crate::git::{Git, checkpoint_message};
 use crate::plan::{AgentKind, Plan};
 use crate::process::{GroupChild, spawn_in_group};
 use crate::prompt;
-use crate::state::{Failure, FailureKind, PhaseStatus, RunPaths, RunState, truncate_summary};
+use crate::state::{
+    Failure, FailureKind, PhaseStatus, RateLimits, RunPaths, RunState, truncate_summary,
+};
 use crate::verify::{self, VerifyEvent, VerifyOutcome};
 
 const POLL: Duration = Duration::from_millis(50);
@@ -671,6 +673,15 @@ fn handle_agent_event(ctx: &mut PhaseContext, phase: usize, event: AgentEvent) -
                 state.cost_usd = Some(state.cost_usd.unwrap_or(0.0) + cost);
             }
             ctx.save()?;
+        }
+        AgentEvent::RateLimits(windows) => {
+            // Informational: a failed write never fails the phase.
+            let _ = RateLimits::save_if_changed(
+                ctx.git.root(),
+                ctx.agent.kind(),
+                windows,
+                Timestamp::now().as_second(),
+            );
         }
         _ => {}
     }

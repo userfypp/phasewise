@@ -1096,6 +1096,7 @@ fn status_json(run: &Run) -> Result<String> {
         .collect();
     let any_cost = state.phases.iter().any(|p| p.cost_usd.is_some());
     let limit = ops::spending_limit(run).unwrap_or(run.plan.config.max_cost_usd);
+    let limits = run_limits(run);
     let value = serde_json::json!({
         "run_id": state.run_id,
         "status": state.status,
@@ -1105,9 +1106,25 @@ fn status_json(run: &Run) -> Result<String> {
         "run_branch": state.run_branch,
         "cost_usd": any_cost.then(|| state.cost_usd()),
         "max_cost_usd": limit,
+        "limits": limits.as_ref().map(|l| l
+            .windows
+            .iter()
+            .map(|w| serde_json::json!({
+                "name": w.name,
+                "utilization": w.utilization,
+                "resets_at": w.resets_at,
+                "status": w.status,
+            }))
+            .collect::<Vec<_>>()),
+        "limits_seen_at": limits.as_ref().map(|l| l.seen_at),
         "phases": phases,
     });
     Ok(serde_json::to_string_pretty(&value)?)
+}
+
+/// The usage limits last reported by the run's agent, if any.
+fn run_limits(run: &Run) -> Option<crate::state::RateLimits> {
+    crate::state::RateLimits::load(run.git.root()).filter(|l| l.agent == run.state.agent)
 }
 
 fn status(json: bool) -> Result<ExitCode> {
@@ -1158,6 +1175,20 @@ fn status(json: bool) -> Result<ExitCode> {
             Some(limit) => outln!("Cost:   {spent} of {} limit", crate::display::money(limit)),
             None => outln!("Cost:   {spent}"),
         }
+    }
+    if let Some(limits) = run_limits(&run) {
+        let (now, tz) = crate::display::limits_clock();
+        let parts: Vec<String> = crate::display::limit_parts(&limits, now, &tz)
+            .into_iter()
+            .map(|p| {
+                if p.warn {
+                    Styler::for_stdout().paint(Role::Warn, &p.text)
+                } else {
+                    p.text
+                }
+            })
+            .collect();
+        outln!("Limits: {}", parts.join("   "));
     }
     outln!();
 

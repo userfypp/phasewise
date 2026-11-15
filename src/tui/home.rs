@@ -996,6 +996,7 @@ mod tests {
             plan_uncommitted: false,
             plan_rel: "phasewise.md".into(),
             run: None,
+            limits: None,
         }
     }
 

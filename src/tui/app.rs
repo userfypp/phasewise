@@ -518,6 +518,7 @@ mod tests {
             active: true,
             completed: false,
             phases,
+            limits: None,
         })
     }
 

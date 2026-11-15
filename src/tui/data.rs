@@ -15,7 +15,7 @@ use crate::engine::phase_agent;
 use crate::git::Git;
 use crate::ops::Run;
 use crate::plan::{self, AgentKind};
-use crate::state::{PhaseStatus, RunStatus};
+use crate::state::{PhaseStatus, RateLimits, RunStatus};
 use jiff::Timestamp;
 
 /// One line of the Log tab.
@@ -86,6 +86,8 @@ pub struct RunView {
     /// Every phase is approved: the run can be merged.
     pub completed: bool,
     pub phases: Vec<PhaseView>,
+    /// The usage limits the agent last reported in this repository.
+    pub limits: Option<RateLimits>,
 }
 
 pub fn load_run_view(run: &Run) -> RunView {
@@ -135,6 +137,7 @@ pub fn load_run_view(run: &Run) -> RunView {
         active: state.status == RunStatus::Active,
         completed: state.status == RunStatus::Completed,
         phases,
+        limits: RateLimits::load(run.git.root()).filter(|l| l.agent == state.agent),
     }
 }
 
@@ -323,7 +326,7 @@ impl RunSummary {
 }
 
 /// What the home screen shows about the repository and its plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HomeData {
     /// Repository root.
     pub root: PathBuf,
@@ -341,6 +344,8 @@ pub struct HomeData {
     pub plan_rel: String,
     /// The current run (any status), if the repository has one.
     pub run: Option<RunSummary>,
+    /// The usage limits the agent last reported in this repository.
+    pub limits: Option<RateLimits>,
 }
 
 /// Loads the home data for the repository that contains `cwd`.
@@ -412,6 +417,7 @@ fn load_home_in(git: &Git, cwd: &Path) -> Result<HomeData> {
                 })
                 .collect(),
         });
+    let limits = RateLimits::load(&root);
     Ok(HomeData {
         root,
         repo_name,
@@ -421,6 +427,7 @@ fn load_home_in(git: &Git, cwd: &Path) -> Result<HomeData> {
         plan_uncommitted,
         plan_rel,
         run,
+        limits,
     })
 }
 

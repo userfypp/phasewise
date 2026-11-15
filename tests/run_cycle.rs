@@ -277,6 +277,41 @@ fn status_json_describes_the_run() {
 }
 
 #[test]
+fn status_shows_the_limits_the_agent_reported() {
+    let env = Env::new();
+    let before: Value =
+        serde_json::from_str(&env.ok(&["status", "--json"], &[]).stdout).unwrap_or(Value::Null);
+    assert_eq!(before, Value::Null);
+    env.ok(&["run"], &[]);
+    let stored: Value =
+        serde_json::from_str(&env.repo.read(".phasewise/rate-limits.json")).expect("valid JSON");
+    assert_eq!(stored["agent"], "claude");
+    assert!(stored["seen_at"].is_i64(), "{stored}");
+    assert_eq!(stored["windows"][0]["name"], "five_hour");
+
+    let json: Value =
+        serde_json::from_str(&env.ok(&["status", "--json"], &[]).stdout).expect("status json");
+    let limits = json["limits"].as_array().expect("limits");
+    assert_eq!(limits.len(), 2);
+    assert_eq!(limits[0]["name"], "five_hour");
+    assert_eq!(limits[0]["utilization"], 0.36);
+    assert_eq!(limits[0]["resets_at"], 4_102_444_800_i64);
+    assert_eq!(limits[0]["status"], "allowed");
+    assert_eq!(limits[1]["name"], "seven_day");
+    assert_eq!(limits[1]["status"], "allowed_warning");
+    assert!(json["limits_seen_at"].is_i64());
+
+    let text = env.ok(&["status"], &[]).stdout;
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("Limits: "))
+        .unwrap_or_else(|| panic!("no Limits line in {text}"));
+    assert!(line.contains("5 h 36 % · resets"), "{line}");
+    assert!(line.contains("7 d 49 % · allowed_warning"), "{line}");
+    env.check_invariants();
+}
+
+#[test]
 fn logs_describe_a_failed_phase() {
     let env = Env::new();
     assert_eq!(env.exec(&["logs"], &[]).code, 1);

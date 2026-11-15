@@ -9,8 +9,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{
-    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, program_from_env, program_logged_in,
-    program_version, tidy_detail,
+    Agent, AgentEvent, AgentParser, LaunchOptions, ModelInfo, RateWindow, program_from_env,
+    program_logged_in, program_version, tidy_detail,
 };
 use crate::plan::{self, AgentKind};
 
@@ -256,6 +256,54 @@ impl ClaudeParser {
         }
     }
 
+    /// Windows of a `rate_limit_event`: `unifiedWindows` when present, else
+    /// the single window of `rateLimitType` (no utilization).
+    fn rate_limits(value: &Value) -> Vec<RateWindow> {
+        let Some(info) = value.get("rate_limit_info").filter(|i| i.is_object()) else {
+            return Vec::new();
+        };
+        let text = |v: &Value, key: &str| {
+            v.get(key)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let default_status = text(info, "status").unwrap_or_else(|| "allowed".to_string());
+        let resets = |v: &Value| v.get("resetsAt").and_then(Value::as_f64).map(|s| s as i64);
+        let mut windows: Vec<RateWindow> = info
+            .get("unifiedWindows")
+            .and_then(Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .filter(|(_, w)| w.is_object())
+                    .map(|(name, w)| RateWindow {
+                        name: name.clone(),
+                        utilization: w.get("utilization").and_then(Value::as_f64),
+                        resets_at: resets(w),
+                        status: text(w, "status").unwrap_or_else(|| default_status.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if windows.is_empty()
+            && let Some(name) = text(info, "rateLimitType")
+        {
+            windows.push(RateWindow {
+                name,
+                utilization: None,
+                resets_at: resets(info),
+                status: default_status,
+            });
+        }
+        let rank = |name: &str| match name {
+            "five_hour" => 0,
+            "seven_day" => 1,
+            _ => 2,
+        };
+        windows.sort_by(|a, b| (rank(&a.name), &a.name).cmp(&(rank(&b.name), &b.name)));
+        windows
+    }
+
     fn retry_detail(value: &Value) -> String {
         let error = value
             .get("error")
@@ -305,6 +353,12 @@ impl AgentParser for ClaudeParser {
                 self.denial(&value, &mut out)
             }
             (Some("assistant"), _) => self.assistant(&value, &mut out),
+            (Some("rate_limit_event"), _) => {
+                let windows = Self::rate_limits(&value);
+                if !windows.is_empty() {
+                    out.push(AgentEvent::RateLimits(windows));
+                }
+            }
             (Some("result"), _) => {
                 if let Some(denials) = value.get("permission_denials").and_then(Value::as_array) {
                     for denial in denials {
@@ -361,6 +415,55 @@ mod tests {
             name: name.into(),
             detail: detail.into(),
             subagent,
+        }
+    }
+
+    fn window(name: &str, utilization: Option<f64>, resets_at: i64, status: &str) -> RateWindow {
+        RateWindow {
+            name: name.into(),
+            utilization,
+            resets_at: Some(resets_at),
+            status: status.into(),
+        }
+    }
+
+    #[test]
+    fn rate_limit_event_gives_the_unified_windows() {
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794678600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.36,"resetsAt":1794678600,"status":"allowed"},"seven_day":{"utilization":0.49,"resetsAt":1795176000,"status":"allowed_warning"}}},"uuid":"u","session_id":"s"}"#;
+        let events = ClaudeParser::new(Path::new("/work/repo")).feed(line);
+        assert_eq!(
+            events[1..],
+            [AgentEvent::RateLimits(vec![
+                window("five_hour", Some(0.36), 1794678600, "allowed"),
+                window("seven_day", Some(0.49), 1795176000, "allowed_warning"),
+            ])]
+        );
+    }
+
+    #[test]
+    fn rate_limit_event_without_unified_windows_uses_the_single_window() {
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794678600,"rateLimitType":"five_hour"}}"#;
+        assert_eq!(
+            ClaudeParser::new(Path::new("/work/repo")).feed(line),
+            [AgentEvent::RateLimits(vec![window(
+                "five_hour",
+                None,
+                1794678600,
+                "rejected"
+            )])]
+        );
+    }
+
+    #[test]
+    fn malformed_rate_limit_events_are_ignored() {
+        let mut parser = ClaudeParser::new(Path::new("/work/repo"));
+        for line in [
+            r#"{"type":"rate_limit_event"}"#,
+            r#"{"type":"rate_limit_event","rate_limit_info":"x"}"#,
+            r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":[1]}}"#,
+            r#"{"type":"rate_limit_event","info":{"remaining":5}}"#,
+        ] {
+            assert_eq!(parser.feed(line), []);
         }
     }
 

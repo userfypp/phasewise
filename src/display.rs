@@ -2,12 +2,15 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::agent::AgentEvent;
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, Zoned};
+
 use crate::agent::claude::CLAUDE_MODELS;
+use crate::agent::{AgentEvent, RateWindow};
 use crate::engine::EngineEvent;
 use crate::ops::PlanEvent;
 use crate::plan::AgentKind;
-use crate::state::{FailureKind, PhaseStatus};
+use crate::state::{FailureKind, PhaseStatus, RateLimits};
 use crate::style::{Role, Styler};
 
 const MAX_MESSAGE_CHARS: usize = 160;
@@ -193,7 +196,9 @@ fn tool_icon(name: &str, subagent: bool) -> &'static str {
 
 pub fn agent_event_line(event: &AgentEvent) -> Option<EventLine> {
     match event {
-        AgentEvent::SessionStarted { .. } | AgentEvent::Finished { .. } => None,
+        AgentEvent::SessionStarted { .. }
+        | AgentEvent::Finished { .. }
+        | AgentEvent::RateLimits(_) => None,
         AgentEvent::Message { text, subagent } => {
             let line = first_line_short(text);
             let tag = if *subagent { "[subagent] " } else { "" };
@@ -346,6 +351,104 @@ pub fn money(cost: f64) -> String {
     }
 }
 
+/// Limits seen longer ago than this get a `seen HH:MM` note.
+const LIMITS_STALE_SECS: i64 = 600;
+
+/// A piece of the limits line; `warn` for a window whose status is not `allowed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitPart {
+    pub text: String,
+    pub warn: bool,
+}
+
+/// The current time and the local time zone, for [`limit_parts`]. Fixed under
+/// test so that snapshots are deterministic.
+pub fn limits_clock() -> (Timestamp, TimeZone) {
+    #[cfg(test)]
+    {
+        (
+            Timestamp::from_second(1_794_660_000).unwrap_or(Timestamp::UNIX_EPOCH),
+            TimeZone::UTC,
+        )
+    }
+    #[cfg(not(test))]
+    {
+        (Timestamp::now(), TimeZone::system())
+    }
+}
+
+fn window_label(name: &str) -> &str {
+    match name {
+        "five_hour" => "5 h",
+        "seven_day" => "7 d",
+        other => other,
+    }
+}
+
+/// `23:00` when `at` is on the same local day as `now`, else `Thu 12:00`.
+fn clock_text(at: i64, now: Timestamp, tz: &TimeZone) -> Option<String> {
+    let at: Zoned = Timestamp::from_second(at).ok()?.to_zoned(tz.clone());
+    let now = now.to_zoned(tz.clone());
+    let format = if at.date() == now.date() {
+        "%H:%M"
+    } else {
+        "%a %H:%M"
+    };
+    Some(at.strftime(format).to_string())
+}
+
+/// The windows of the limits line, one part each, plus a final `seen HH:MM`
+/// part when the values are older than ten minutes:
+/// `5 h 36 % · resets 23:00`. A window that has reset shows `5 h reset`.
+pub fn limit_parts(limits: &RateLimits, now: Timestamp, tz: &TimeZone) -> Vec<LimitPart> {
+    let now_secs = now.as_second();
+    let mut parts: Vec<LimitPart> = limits
+        .windows
+        .iter()
+        .map(|w| window_part(w, now, tz))
+        .collect();
+    if now_secs - limits.seen_at > LIMITS_STALE_SECS
+        && let Some(at) = clock_text(limits.seen_at, now, tz)
+    {
+        parts.push(LimitPart {
+            text: format!("seen {at}"),
+            warn: false,
+        });
+    }
+    parts
+}
+
+fn window_part(w: &RateWindow, now: Timestamp, tz: &TimeZone) -> LimitPart {
+    let label = window_label(&w.name);
+    if w.resets_at.is_some_and(|at| at <= now.as_second()) {
+        return LimitPart {
+            text: format!("{label} reset"),
+            warn: false,
+        };
+    }
+    let mut text = label.to_string();
+    if let Some(u) = w.utilization {
+        text.push_str(&format!(" {:.0} %", u * 100.0));
+    }
+    let warn = w.status != "allowed";
+    if warn {
+        text.push_str(&format!(" · {}", w.status));
+    }
+    if let Some(at) = w.resets_at.and_then(|at| clock_text(at, now, tz)) {
+        text.push_str(&format!(" · resets {at}"));
+    }
+    LimitPart { text, warn }
+}
+
+/// The limits line as plain text, parts separated by three spaces.
+pub fn limits_text(limits: &RateLimits, now: Timestamp, tz: &TimeZone) -> String {
+    limit_parts(limits, now, tz)
+        .into_iter()
+        .map(|p| p.text)
+        .collect::<Vec<_>>()
+        .join("   ")
+}
+
 /// The last line of a phase: ready for review (with files and cost when
 /// known) or failed. `None` for other outcomes.
 pub fn phase_summary(event: &EngineEvent, styler: &Styler) -> Option<String> {
@@ -451,6 +554,108 @@ mod tests {
 
     use super::*;
     use crate::state::Failure;
+
+    // 12:00:00 UTC on a Saturday; windows below are relative to it.
+    const NOW: i64 = 1_794_657_600;
+
+    fn rate(name: &str, u: Option<f64>, resets: Option<i64>, status: &str) -> RateWindow {
+        RateWindow {
+            name: name.into(),
+            utilization: u,
+            resets_at: resets,
+            status: status.into(),
+        }
+    }
+
+    fn limits(seen_at: i64, windows: Vec<RateWindow>) -> RateLimits {
+        RateLimits {
+            agent: AgentKind::Claude,
+            seen_at,
+            windows,
+        }
+    }
+
+    fn at(secs: i64, tz: &TimeZone) -> String {
+        let l = limits(
+            secs,
+            vec![
+                rate("five_hour", Some(0.36), Some(NOW + 11 * 3600), "allowed"),
+                rate("seven_day", Some(0.49), Some(NOW + 4 * 86400), "allowed"),
+            ],
+        );
+        limits_text(&l, Timestamp::from_second(secs).unwrap(), tz)
+    }
+
+    #[test]
+    fn limits_line_shows_percent_and_local_reset_times() {
+        assert_eq!(
+            at(NOW, &TimeZone::UTC),
+            "5 h 36 % · resets 23:00   7 d 49 % · resets Wed 12:00"
+        );
+        let plus_two = TimeZone::fixed(jiff::tz::offset(2));
+        assert_eq!(
+            at(NOW, &plus_two),
+            "5 h 36 % · resets Sun 01:00   7 d 49 % · resets Wed 14:00"
+        );
+    }
+
+    #[test]
+    fn a_reset_on_the_same_day_shows_only_the_time() {
+        let l = limits(
+            NOW,
+            vec![rate("five_hour", Some(0.1), Some(NOW + 3600), "allowed")],
+        );
+        let now = Timestamp::from_second(NOW).unwrap();
+        assert_eq!(
+            limits_text(&l, now, &TimeZone::UTC),
+            "5 h 10 % · resets 13:00"
+        );
+    }
+
+    #[test]
+    fn a_window_that_has_reset_hides_its_stale_percentage() {
+        let l = limits(
+            NOW - 60,
+            vec![
+                rate("five_hour", Some(0.9), Some(NOW - 1), "allowed_warning"),
+                rate("seven_day", Some(0.2), Some(NOW + 3600), "allowed"),
+            ],
+        );
+        let now = Timestamp::from_second(NOW).unwrap();
+        assert_eq!(
+            limits_text(&l, now, &TimeZone::UTC),
+            "5 h reset   7 d 20 % · resets 13:00"
+        );
+    }
+
+    #[test]
+    fn a_status_other_than_allowed_is_shown_and_flagged() {
+        let l = limits(
+            NOW,
+            vec![
+                rate("five_hour", Some(0.91), Some(NOW + 3600), "allowed_warning"),
+                rate("opus", None, None, "rejected"),
+            ],
+        );
+        let now = Timestamp::from_second(NOW).unwrap();
+        let parts = limit_parts(&l, now, &TimeZone::UTC);
+        assert_eq!(parts[0].text, "5 h 91 % · allowed_warning · resets 13:00");
+        assert_eq!(parts[1].text, "opus · rejected");
+        assert!(parts[0].warn && parts[1].warn);
+    }
+
+    #[test]
+    fn old_limits_get_a_seen_note_and_recent_ones_do_not() {
+        let w = vec![rate("five_hour", Some(0.5), Some(NOW + 3600), "allowed")];
+        let now = Timestamp::from_second(NOW).unwrap();
+        let recent = limits(NOW - 600, w.clone());
+        assert!(!limits_text(&recent, now, &TimeZone::UTC).contains("seen"));
+        let old = limits(NOW - 601, w);
+        assert_eq!(
+            limits_text(&old, now, &TimeZone::UTC),
+            "5 h 50 % · resets 13:00   seen 11:49"
+        );
+    }
 
     fn line(event: &EngineEvent) -> EventLine {
         event_line(event, 30).expect("a line")

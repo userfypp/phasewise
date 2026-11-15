@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::agent::RateWindow;
 use crate::plan::AgentKind;
 use crate::process;
 
@@ -134,6 +135,58 @@ impl PhasewiseDir {
 
     pub fn write_current(&self, run_id: &str) -> Result<()> {
         write_atomic(&self.current_file(), format!("{run_id}\n").as_bytes())
+    }
+
+    pub fn rate_limits_file(&self) -> PathBuf {
+        self.dir.join("rate-limits.json")
+    }
+}
+
+/// The latest usage-limit windows an agent reported, kept per repository in
+/// `.phasewise/rate-limits.json`. Last values seen during a phase, not a live
+/// query.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RateLimits {
+    pub agent: AgentKind,
+    /// When the windows were seen, in Unix seconds.
+    pub seen_at: i64,
+    pub windows: Vec<RateWindow>,
+}
+
+impl RateLimits {
+    /// The stored limits; `None` when there is no file or it cannot be read.
+    pub fn load(repo_root: &Path) -> Option<RateLimits> {
+        let text = fs::read_to_string(PhasewiseDir::new(repo_root).rate_limits_file()).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Stores `windows` seen at `seen_at` unless they equal the stored ones
+    /// and were stored less than a minute ago (the event arrives many times
+    /// per phase; the refresh keeps `seen_at` honest).
+    /// Errors are for the caller to ignore: limits never fail a phase.
+    pub fn save_if_changed(
+        repo_root: &Path,
+        agent: AgentKind,
+        windows: &[RateWindow],
+        seen_at: i64,
+    ) -> Result<()> {
+        if let Some(stored) = RateLimits::load(repo_root)
+            && stored.agent == agent
+            && stored.windows == windows
+            && seen_at.saturating_sub(stored.seen_at) < 60
+        {
+            return Ok(());
+        }
+        let limits = RateLimits {
+            agent,
+            seen_at,
+            windows: windows.to_vec(),
+        };
+        let json = serde_json::to_string_pretty(&limits)?;
+        write_atomic(
+            &PhasewiseDir::new(repo_root).rate_limits_file(),
+            json.as_bytes(),
+        )
     }
 }
 
