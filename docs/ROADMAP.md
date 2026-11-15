@@ -9,6 +9,8 @@ welcome (see [Labels](../CONTRIBUTING.md#labels)).
 
 - [Accept the working tree of a failed phase after fixing it by hand](https://github.com/userfypp/phasewise/issues/30) (#30)
 
+- [Safe retry, rollback and recovery: commits lost by `retry`, submodules, `abort`, orphaned agents](https://github.com/userfypp/phasewise/issues/86) (#86)
+
 ## Planned
 
 - [Report a run as Markdown for a pull request description](https://github.com/userfypp/phasewise/issues/31) (#31)
@@ -20,6 +22,17 @@ welcome (see [Labels](../CONTRIBUTING.md#labels)).
 - [Real-terminal tests with a pty](https://github.com/userfypp/phasewise/issues/51) (#51)
 - [Dependency and licence checks in CI](https://github.com/userfypp/phasewise/issues/54) (#54)
 - [Prebuilt binaries and a Homebrew formula](https://github.com/userfypp/phasewise/issues/55) (#55)
+
+## Known bugs
+
+Found in an audit and grouped by area:
+
+- [Run screen: fixes and missing features (tabs in diffs, long diffs, stale screen, chaining phases)](https://github.com/userfypp/phasewise/issues/83) (#83)
+- [Plan, timeout and settings validation (huge timeouts, BOM, empty titles)](https://github.com/userfypp/phasewise/issues/84) (#84)
+- [Handling of the checks' output](https://github.com/userfypp/phasewise/issues/85) (#85)
+- [`settings set` loses updates when run at the same time](https://github.com/userfypp/phasewise/issues/75) (#75)
+- [Hiding the repository path can mangle other paths](https://github.com/userfypp/phasewise/issues/76) (#76)
+- [`doctor` says the tools are ready despite repository problems](https://github.com/userfypp/phasewise/issues/77) (#77)
 
 ## Later
 
