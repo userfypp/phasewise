@@ -247,8 +247,11 @@ impl Settings {
             Some(key) => vec![key],
             None => REGISTRY.iter().map(|s| s.key).collect(),
         };
-        keys.into_iter()
-            .fold(false, |any, k| self.table.remove(k).is_some() || any)
+        let mut removed = false;
+        for k in keys {
+            removed |= self.table.remove(k).is_some();
+        }
+        removed
     }
 
     /// Whether the usage limits are shown.
