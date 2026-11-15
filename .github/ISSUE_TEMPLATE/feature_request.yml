@@ -1,6 +1,6 @@
 name: Feature request
 description: An idea that would make phasewise more useful.
-labels: ["enhancement"]
+labels: ["type: feature"]
 body:
   - type: textarea
     id: idea

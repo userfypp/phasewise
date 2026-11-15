@@ -15,6 +15,17 @@ bug, include:
   (agent output, `stderr.log`, verification logs). Remove anything private
   first: paths, account names, tokens.
 
+### Labels
+
+Every issue has one `type:` label (`bug`, `feature`, `test`, `docs`, `chore` or
+`design`, a decision to make before building), usually one or two `area:`
+labels (`cli`, `tui`, `engine`, `agents`, `git`, `plan`, `state`, `release`)
+and, once planned, a `priority:` label (`high` is next up, `medium` planned,
+`low` no rush). `agent: claude` and `agent: codex` mark issues specific to one
+agent. `status: needs info` and `status: blocked` say what an issue is waiting
+for. The type labels match the Conventional Commit types of pull request
+titles. Issues with `good first issue` or `help wanted` are open to anyone.
+
 Report vulnerabilities privately, as described in the
 [security policy](SECURITY.md), never in a public issue.
 
