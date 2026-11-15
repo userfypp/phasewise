@@ -17,6 +17,7 @@ fn phasewise_command(repo: &TestRepo) -> Command {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("phasewise"));
     cmd.current_dir(repo.path())
         .envs(isolated_git_env())
+        .env("PHASEWISE_CONFIG_DIR", common::NO_CONFIG_DIR)
         .env_remove("PHASEWISE_CODEX_BIN");
     cmd
 }

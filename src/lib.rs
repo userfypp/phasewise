@@ -14,6 +14,7 @@ pub mod ops;
 pub mod plan;
 pub mod process;
 pub mod prompt;
+pub mod settings;
 pub mod state;
 pub mod style;
 pub mod tui;

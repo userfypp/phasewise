@@ -9,8 +9,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
-use super::shared::{FooterItem, Level, Notice, ShortcutGroups, item};
+use super::shared::{FooterItem, Level, Notice, SettingsPanel, ShortcutGroups, item};
 use crate::display::{EventLine, limit_parts, limits_clock};
+use crate::settings::{self, REGISTRY};
 use crate::state::RateLimits;
 use crate::style::Role;
 
@@ -572,6 +573,127 @@ pub fn error_popup(lines: &[String], screen_width: u16) -> Popup {
         body.remove(0);
     }
     popup.body(body)
+}
+
+/// The settings popup: label and value per row (changed values in the accent),
+/// the selected row's description above, the text being typed in its row.
+pub fn settings_popup(panel: &SettingsPanel, screen_width: u16) -> Popup {
+    // The size comes from the registry only, never from the values, the
+    // selection or the edit: the popup does not move while it is used.
+    let label_width = REGISTRY
+        .iter()
+        .map(|s| text_width(s.label))
+        .max()
+        .unwrap_or(0);
+    let value_width = REGISTRY
+        .iter()
+        .flat_map(|s| s.values().into_iter().chain([s.default, "(default)"]))
+        .map(text_width)
+        .max()
+        .unwrap_or(0)
+        .max(SETTINGS_VALUE_WIDTH);
+    let row_width = 2 + label_width + 2 + value_width;
+    let popup = Popup::new("Settings");
+    let width = row_width
+        .max(SETTINGS_MIN_WIDTH)
+        .min(popup.text_room(screen_width));
+    let description_lines = REGISTRY
+        .iter()
+        .map(|s| wrap_text(s.description, width).len())
+        .max()
+        .unwrap_or(1);
+    // Fills a line with spaces to the popup's width.
+    let padded = |mut line: Line<'static>| {
+        let missing = width.saturating_sub(line_width(&line));
+        line.spans.push(Span::raw(" ".repeat(missing)));
+        line
+    };
+    let mut lines = Vec::new();
+    for (i, spec) in REGISTRY.iter().enumerate() {
+        let selected = i == panel.selected;
+        let editing = selected.then_some(panel.editing.as_ref()).flatten();
+        let value = match editing {
+            // The end of the text is the part being typed.
+            Some(text) => tail(&format!("{text}█"), value_width),
+            None => truncate(
+                &settings::shown(spec, &panel.settings.get(spec.key)),
+                value_width,
+            ),
+        };
+        let pointer = if selected {
+            Span::styled("❯ ", accent())
+        } else {
+            Span::raw("  ")
+        };
+        let label_style = if selected {
+            accent_bold()
+        } else {
+            Style::new()
+        };
+        let value_style = if editing.is_some() || panel.settings.is_changed(spec.key) {
+            accent()
+        } else {
+            dim()
+        };
+        let gap = width.saturating_sub(2 + label_width + text_width(&value));
+        lines.push(padded(Line::from(vec![
+            pointer,
+            Span::styled(pad_to(spec.label, label_width), label_style),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(value, value_style),
+        ])));
+    }
+    let description = REGISTRY
+        .get(panel.selected)
+        .map(|s| wrap_text(s.description, width))
+        .unwrap_or_default();
+    lines.push(padded(Line::raw("")));
+    for i in 0..description_lines {
+        let text = description.get(i).cloned().unwrap_or_default();
+        lines.push(padded(Line::styled(text, dim())));
+    }
+    // Two lines are always reserved for the reason a typed value was refused.
+    lines.push(padded(Line::raw("")));
+    let why = panel
+        .error
+        .as_deref()
+        .map(|why| wrap_text(why, width))
+        .unwrap_or_default();
+    for i in 0..SETTINGS_ERROR_LINES {
+        let mut text = why.get(i).cloned().unwrap_or_default();
+        if i + 1 == SETTINGS_ERROR_LINES && why.len() > SETTINGS_ERROR_LINES {
+            text = truncate(&format!("{text} …"), width);
+        }
+        lines.push(padded(Line::styled(text, role_style(Role::Fail))));
+    }
+    popup.body(lines)
+}
+
+/// Narrowest content of the settings popup, in columns.
+const SETTINGS_MIN_WIDTH: usize = 56;
+/// Width of the value column of the settings popup, at least.
+const SETTINGS_VALUE_WIDTH: usize = 24;
+/// Lines reserved for an error in the settings popup.
+const SETTINGS_ERROR_LINES: usize = 2;
+
+/// The last `max` columns of `text`, with a leading `…` when it is cut.
+fn tail(text: &str, max: usize) -> String {
+    if text_width(text) <= max {
+        return text.to_string();
+    }
+    let mut kept: Vec<char> = Vec::new();
+    let mut used = 1;
+    for c in text.chars().rev() {
+        let w = char_width(c);
+        if used + w > max {
+            break;
+        }
+        used += w;
+        kept.push(c);
+    }
+    kept.push('…');
+    kept.reverse();
+    kept.into_iter().collect()
 }
 
 /// The shortcuts popup: groups separated by a blank line, keys in the accent.

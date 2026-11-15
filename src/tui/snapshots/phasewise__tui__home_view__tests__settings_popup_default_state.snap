@@ -1,0 +1,28 @@
+---
+source: src/tui/home_view.rs
+expression: render(&home).backend()
+---
+" ╭──────────────────────────────────────────╮                                                       "
+" │ ✻ phasewise 0.3.0                        │                                                       "
+" │   demo · main                            │                                                       "
+" ╰──────────────────────────────────────────╯                                                       "
+"                                                                                                    "
+" Demo plan                                                                                          "
+" phasewise.md · 3 ph╭──────────────────────────────────────────────────────────╮                    "
+"    1  Scaffold the │ Settings                                                 │                    "
+"    2  Add the parse│                                                          │                    "
+"    3  Write the doc│ ❯ Usage limits                                        on │                    "
+"                    │   Bell                                               off │                    "
+" Agent   Claude Code│   Colour                                            auto │                    "
+" Model   sonnet · fr│   Agent                                             plan │                    "
+" Effort  Default · C│   Model                                        (default) │                    "
+"                    │   Effort                                         default │                    "
+" enter toggle · j/k │                                                          │                    "
+"                    │ Show the agent's usage limits on the screens and in      │                    "
+"                    │ status.                                                  │                    "
+"                    │                                                          │                    "
+"                    │                                                          │                    "
+"                    │                                                          │                    "
+"                    ╰──────────────────────────────────────────────────────────╯                    "
+"                                                                                                    "
+"                                                                                                    "

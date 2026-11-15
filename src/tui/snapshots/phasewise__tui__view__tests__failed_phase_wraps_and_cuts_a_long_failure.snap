@@ -31,4 +31,4 @@ expression: terminal.backend()
 "                                │                                                                   "
 "                                │                                                                   "
 "                                                                                                    "
-" r retry · b roll back · tab view · esc home · q quit · ? shortcuts                                 "
+" r retry · b roll back · tab view · esc home · q quit · s settings · ? shortcuts                    "

@@ -7,13 +7,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::data::{HomeData, PlanState, RunSummary};
 use super::shared::{
-    Choice, FooterItem, Notice, ShortcutGroups, confirm_key, digit_row, edit_text, item,
-    picker_footer,
+    Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
+    confirm_key, digit_row, edit_text, item, picker_footer,
 };
 use crate::agent::{LaunchOptions, ModelInfo};
 use crate::display::{EventLine, money, phase_count};
 use crate::ops::{Override, Overrides, PlanOutcome, PlanResult};
 use crate::plan::{self, AgentKind};
+use crate::settings::Settings;
 
 /// Shown for a key refused while the agent writes the plan.
 const PLANNING_BUSY: &str = "Wait for the plan or stop it first (esc).";
@@ -72,6 +73,8 @@ pub enum Mode {
     ConfirmCommitStart(usize),
     /// Lines of an error, shown until closed.
     Error(Vec<String>),
+    /// The user settings menu.
+    Settings(SettingsPanel),
 }
 
 /// What `p` asks the worker to do.
@@ -108,6 +111,8 @@ pub enum HomeCommand {
     CancelPlan,
     /// Load the model list of the agent in the background.
     LoadModels(AgentKind),
+    /// Save these settings; they already apply on this screen.
+    SaveSettings(Settings),
 }
 
 /// The planning in progress: its heading and the live event lines.
@@ -138,6 +143,8 @@ pub struct Home {
     codex_models: ModelsState,
     pub mode: Mode,
     pub message: Option<Notice>,
+    /// The user settings (what the screen shows depends on them).
+    pub settings: Settings,
     pub planning: Option<Planning>,
     /// When the planning started.
     pub planning_started: Option<Instant>,
@@ -150,17 +157,33 @@ pub struct Home {
 }
 
 impl Home {
-    /// The agent starts as the plan's when the plan is valid, else Claude.
+    /// A home screen with the default settings.
     pub fn new(data: HomeData) -> Home {
-        let agent = match &data.plan {
-            PlanState::Valid(plan) => plan.agent,
-            _ => AgentKind::Claude,
+        Home::with_settings(data, Settings::default())
+    }
+
+    /// The agent starts as the plan's when the plan is valid, else the one of
+    /// the settings, else Claude. The model and the effort of the settings are
+    /// the starting choice only when the plan sets none.
+    pub fn with_settings(data: HomeData, settings: Settings) -> Home {
+        let (agent, model, effort) = match &data.plan {
+            PlanState::Valid(plan) => (
+                plan.agent,
+                plan.model.is_none().then(|| settings.model()).flatten(),
+                plan.effort.is_none().then(|| settings.effort()).flatten(),
+            ),
+            _ => (
+                settings.agent().unwrap_or(AgentKind::Claude),
+                settings.model(),
+                settings.effort(),
+            ),
         };
         Home {
             data,
             agent,
-            model: None,
-            effort: None,
+            model,
+            effort,
+            settings,
             claude: Probe::Checking,
             codex: Probe::Checking,
             claude_models: ModelsState::NotLoaded,
@@ -452,6 +475,26 @@ impl Home {
                 }
                 None
             }
+            Mode::Settings(panel) => self.key_settings(key, panel),
+        }
+    }
+
+    fn key_settings(&mut self, key: KeyEvent, mut panel: SettingsPanel) -> Option<HomeCommand> {
+        match panel.handle_key(key) {
+            PanelOutcome::Close => {
+                self.mode = Mode::Normal;
+                None
+            }
+            PanelOutcome::Stay => {
+                self.mode = Mode::Settings(panel);
+                None
+            }
+            PanelOutcome::Changed => {
+                self.settings = panel.settings.clone();
+                let command = HomeCommand::SaveSettings(panel.settings.clone());
+                self.mode = Mode::Settings(panel);
+                Some(command)
+            }
         }
     }
 
@@ -516,6 +559,10 @@ impl Home {
             KeyCode::Char('q') => self.quit(),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                None
+            }
+            KeyCode::Char('s') => {
+                self.mode = Mode::Settings(SettingsPanel::new(self.settings.clone()));
                 None
             }
             KeyCode::Esc => {
@@ -788,6 +835,7 @@ impl Home {
     /// item is not in the list: the renderer appends it.
     pub fn footer(&self) -> Vec<FooterItem> {
         match &self.mode {
+            Mode::Settings(panel) => return panel.footer(),
             Mode::ConfirmQuit(_)
             | Mode::ConfirmStopPlan(_)
             | Mode::ConfirmReplace(..)
@@ -802,11 +850,12 @@ impl Home {
             Mode::Error(_) => return vec![item("enter", "close")],
             Mode::Normal => {}
         }
+        let settings = item("s", "settings");
         if self.planning.is_some() {
-            return vec![item("esc", "stop"), item("q", "quit")];
+            return vec![item("esc", "stop"), item("q", "quit"), settings];
         }
         if self.active_run().is_some() {
-            return vec![item("enter", "open run"), item("q", "quit")];
+            return vec![item("enter", "open run"), item("q", "quit"), settings];
         }
         let (agent, model, effort) = (item("a", "agent"), item("m", "model"), item("e", "effort"));
         let mut keys = Vec::new();
@@ -827,7 +876,7 @@ impl Home {
             PlanState::Missing => keys.extend([item("p", "write a plan"), agent, model, effort]),
             PlanState::Invalid(_) => keys.extend([item("p", "new plan"), agent, model, effort]),
         }
-        keys.push(item("q", "quit"));
+        keys.extend([item("q", "quit"), settings]);
         keys
     }
 
@@ -861,6 +910,7 @@ impl Home {
                 vec![
                     ("esc", "stop the plan being written"),
                     ("?", "show or hide the shortcuts"),
+                    SETTINGS_SHORTCUT,
                     ("q / Ctrl-C", "quit"),
                 ],
             ),
@@ -1563,26 +1613,26 @@ mod tests {
     #[test]
     fn footer_follows_the_state() {
         let mut h = valid();
-        assert_eq!(keys(&h), ["enter", "p", "m", "a", "e", "q"]);
+        assert_eq!(keys(&h), ["enter", "p", "m", "a", "e", "q", "s"]);
         h.data.plan_uncommitted = true;
-        assert_eq!(keys(&h), ["enter", "c", "p", "m", "a", "e", "q"]);
+        assert_eq!(keys(&h), ["enter", "c", "p", "m", "a", "e", "q", "s"]);
         assert_eq!(
             keys(&home_with(PlanState::Missing)),
-            ["p", "a", "m", "e", "q"]
+            ["p", "a", "m", "e", "q", "s"]
         );
         assert_eq!(
             keys(&home_with(PlanState::Invalid(Vec::new()))),
-            ["p", "a", "m", "e", "q"]
+            ["p", "a", "m", "e", "q", "s"]
         );
         h.begin_planning();
-        assert_eq!(keys(&h), ["esc", "q"]);
+        assert_eq!(keys(&h), ["esc", "q", "s"]);
         h.mode = Mode::ConfirmQuit(0);
         assert_eq!(keys(&h), ["enter", "1–2", "esc"]);
         h.mode = Mode::Error(Vec::new());
         assert_eq!(keys(&h), ["enter"]);
         let mut active = valid();
         active.data.run = Some(run_summary(RunStatus::Active));
-        assert_eq!(keys(&active), ["enter", "q"]);
+        assert_eq!(keys(&active), ["enter", "q", "s"]);
         let mut popup = valid();
         popup.mode = Mode::EffortPopup(0);
         assert_eq!(keys(&popup), ["enter", "1–6", "esc"]);
@@ -1947,5 +1997,67 @@ mod tests {
         };
         assert_eq!(lines[1], "cannot write");
         assert!(lines[0].contains("could not write the plan"));
+    }
+
+    #[test]
+    fn s_opens_the_settings_and_a_change_is_applied_and_saved() {
+        let mut h = valid();
+        assert_eq!(h.handle_key(key('s')), None);
+        assert!(matches!(h.mode, Mode::Settings(_)));
+        assert_eq!(keys(&h), ["enter", "j/k", "esc"]);
+        let command = h.handle_key(code(KeyCode::Enter));
+        assert!(!h.settings.limits());
+        assert!(matches!(command, Some(HomeCommand::SaveSettings(s)) if !s.limits()));
+        assert_eq!(h.handle_key(code(KeyCode::Esc)), None);
+        assert_eq!(h.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn s_works_while_planning_or_with_an_active_run() {
+        let mut h = valid();
+        h.begin_planning();
+        h.handle_key(key('s'));
+        assert!(matches!(h.mode, Mode::Settings(_)));
+        let mut active = valid();
+        active.data.run = Some(run_summary(RunStatus::Active));
+        active.handle_key(key('s'));
+        assert!(matches!(active.mode, Mode::Settings(_)));
+        assert!(
+            Home::shortcuts()
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .any(|(k, _)| *k == "s")
+        );
+    }
+
+    #[test]
+    fn the_settings_set_the_starting_choices_when_the_plan_does_not() {
+        let mut settings = Settings::default();
+        settings.set("agent", "codex").expect("valid");
+        settings.set("model", "gpt-5").expect("valid");
+        settings.set("effort", "high").expect("valid");
+        // No plan: the settings' agent, model and effort.
+        let h = Home::with_settings(data(PlanState::Missing), settings.clone());
+        assert_eq!(h.agent, AgentKind::Codex);
+        assert_eq!(h.model.as_deref(), Some("gpt-5"));
+        assert_eq!(h.effort.as_deref(), Some("high"));
+        // A valid plan keeps its own agent, model and effort.
+        let h = Home::with_settings(
+            data(PlanState::Valid(summary(AgentKind::Claude))),
+            settings.clone(),
+        );
+        assert_eq!(h.agent, AgentKind::Claude);
+        assert_eq!((h.model, h.effort), (None, None));
+        // A valid plan that sets neither takes them from the settings.
+        let mut bare = summary(AgentKind::Claude);
+        bare.model = None;
+        bare.effort = None;
+        let h = Home::with_settings(data(PlanState::Valid(bare)), settings);
+        assert_eq!(h.model.as_deref(), Some("gpt-5"));
+        assert_eq!(h.effort.as_deref(), Some("high"));
+        // The defaults change nothing.
+        let h = Home::with_settings(data(PlanState::Missing), Settings::default());
+        assert_eq!(h.agent, AgentKind::Claude);
+        assert_eq!((h.model, h.effort), (None, None));
     }
 }

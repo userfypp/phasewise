@@ -13,7 +13,8 @@ use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, confirm_popup, dim, dim_join, draw_too_small,
     elapsed_since, event_spans, footer_line, input_popup, limit_spans, line_width, margin,
-    notice_line, render_popup, role_style, shortcuts_popup, text_width, truncate, wrap_text,
+    notice_line, render_popup, role_style, settings_popup, shortcuts_popup, text_width, truncate,
+    wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -48,7 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(body);
     draw_header(frame, app, margin(header));
-    if let Some(l) = &app.view.limits {
+    if let Some(l) = app.view.limits.as_ref().filter(|_| app.settings.limits()) {
         let area = margin(limits);
         let spans = limit_spans(l, dim(), usize::from(area.width));
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -466,6 +467,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
             *row,
         ),
         Mode::Help => shortcuts_popup(&App::shortcuts()),
+        Mode::Settings(panel) => settings_popup(panel, area.width),
         Mode::Note(buffer) => input_popup(
             &format!("Retry phase {}", retry_target(app)),
             "Optional note for the agent, added to the prompt.",
@@ -493,8 +495,9 @@ pub(super) mod tests {
     use super::*;
     use crate::agent::AgentEvent;
     use crate::display::agent_event_line;
+    use crate::settings::Settings;
     use crate::tui::data::{PhaseView, RunView};
-    use crate::tui::shared::Notice;
+    use crate::tui::shared::{Notice, SettingsPanel};
 
     pub(in crate::tui) fn app() -> App {
         let phase = |number, title: &str, status, checkpoint| PhaseView {
@@ -684,6 +687,31 @@ pub(super) mod tests {
         let mut app = app();
         app.mode = Mode::Help;
         insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn settings_popup() {
+        let mut app = app();
+        let mut settings = Settings::default();
+        settings.set("limits", "off").expect("valid");
+        settings.set("color", "never").expect("valid");
+        app.mode = Mode::Settings(SettingsPanel::new(settings));
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn the_settings_popup_has_the_same_rectangle_on_both_screens() {
+        use crate::tui::home_view::tests::popup_rect;
+        let mut app = app();
+        app.mode = Mode::Settings(SettingsPanel::new(Settings::default()));
+        let run = popup_rect(&format!("{}", render(&mut app, 100, 30).backend()));
+        let mut home = crate::tui::home_view::tests::home(crate::tui::data::PlanState::Missing);
+        home.mode = crate::tui::home::Mode::Settings(SettingsPanel::new(Settings::default()));
+        let home = popup_rect(&format!(
+            "{}",
+            crate::tui::home_view::tests::render_sized(&home, 100, 30).backend()
+        ));
+        assert_eq!(run, home);
     }
 
     #[test]

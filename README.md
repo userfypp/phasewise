@@ -76,6 +76,7 @@ Every step is also a command: `phasewise plan "…"`, `phasewise run`, `phasewis
 - phasewise merges a run only when you ask with `merge` or `m`. It never pushes, never deletes branches and makes no network connections of its own. It has no telemetry and never will.
 - Agents cost money. phasewise shows Claude Code's cost per phase; Codex does not report one.
 - Tested with Claude Code 2.1.325 and Codex CLI 0.160.0. Agent CLIs change often, so [Agents](docs/agents.md) lists the exact command lines phasewise uses.
+- The only thing phasewise writes outside the repository's `.phasewise/` is your user settings file (`settings.toml` in your configuration directory), and only when you change a setting with `s` or `phasewise settings`.
 - Windows is not supported.
 
 ## Documentation

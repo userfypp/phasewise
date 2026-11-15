@@ -72,6 +72,7 @@ of them.
 | `a` | Switch the agent between Claude Code and Codex. |
 | `m` | Choose the model. |
 | `e` | Choose the effort. |
+| `s` | Open the [settings](#settings) menu. |
 | `o` | Open the last run (completed or abandoned) to look at it. |
 | `?` | Show every key. |
 | `q` | Quit (asks first if an agent is working). |
@@ -298,6 +299,7 @@ terminal UI.
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
+| `phasewise settings [set KEY VALUE \| reset [KEY]]` | Shows, changes or resets your [settings](#settings). |
 | `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. |
 | `phasewise abort` | Abandons the run and returns to the original branch. |
 
@@ -313,6 +315,42 @@ it; naming the plan's own agent changes nothing, so its phase blocks still apply
 
 Exit codes: `0` success, `1` usage or environment error, `3` a phase ended
 failed, `130` stopped by a second Ctrl-C.
+
+## Settings
+
+User settings are kept in one file, `settings.toml`, in `$PHASEWISE_CONFIG_DIR`
+if that is set, else `$XDG_CONFIG_HOME/phasewise`, else `~/.config/phasewise`.
+It is the only thing phasewise writes outside the repository's `.phasewise/`
+directory, and it is written only when you change a setting. A missing file
+means the defaults. A file that cannot be read or is not valid TOML is
+ignored with a warning (the defaults apply); the next time you change a
+setting the old file is kept as `settings.toml.bak` before it is replaced.
+Keys phasewise does not know are left alone.
+
+| Key | Values (default first) | Effect |
+|---|---|---|
+| `limits` | `on`, `off` | Show the agent's [usage limits](#usage-limits) on the home and run screens and in `status` (`status --json` then reports no limits). |
+| `bell` | `off`, `on` | Ring the terminal bell when a phase reaches review or fails, or the run completes: on the run screen, and from `run`, `next` and `retry` when stderr is a terminal. |
+| `color` | `auto`, `never` | `never` behaves as if `NO_COLOR` were set. It can only turn colour off. |
+| `agent` | `plan`, `claude`, `codex` | The agent the home screen starts with when there is no valid plan; a valid plan's agent always wins. `plan` means the plan's, else Claude. |
+| `model` | free text, empty by default | The model the home screen starts with when the plan sets none (empty: the agent's own). |
+| `effort` | `default`, `low`, `medium`, `high`, `xhigh`, `max` | The effort the home screen starts with when the plan sets none. |
+
+Change them in the menu (`s` on the home and run screens: arrows or `j`/`k`
+move, `enter` or space toggles or cycles a value, `enter` on `model` types a
+name, `esc`, `s` or `q` close it) or from the command line:
+
+```sh
+phasewise settings              # every setting, its value and default; * marks changes
+phasewise settings set bell on
+phasewise settings reset bell   # one setting; without a key, all of them
+```
+
+Changes are saved at once and apply without a restart. Precedence:
+environment variables and command-line flags first, then the settings file,
+then the defaults. For example `NO_COLOR` or `TERM=dumb` turns colour off
+whatever `color` says, and `--agent`, `--model` and `--effort` win over the
+home screen defaults.
 
 ## Files and settings
 
@@ -331,7 +369,8 @@ to `.git/info/exclude`, so it is never committed:
   plans/<id>/              raw output and drafts of each `phasewise plan`
 ```
 
-You can delete `.phasewise/` when no run is in progress.
+You can delete `.phasewise/` when no run is in progress. Your [user
+settings](#settings) live elsewhere, in your configuration directory.
 
 Environment variables:
 
@@ -342,6 +381,7 @@ Environment variables:
 | `PHASEWISE_MAX_COST_USD` | Overrides `max_cost_usd` (the run's spending limit). |
 | `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200). |
 | `NO_COLOR` | Turns off colour in command output and in the screens (bold and dim stay). |
+| `PHASEWISE_CONFIG_DIR` | Directory of the [settings file](#settings) (default `$XDG_CONFIG_HOME/phasewise`, else `~/.config/phasewise`). |
 
 ## When something goes wrong
 
@@ -370,12 +410,13 @@ Environment variables:
 
 **Home screen**: `enter` start or open the run · `c` commit the plan (on the
 branch of a finished run it goes back to your original branch first) · `p` new
-plan · `a` agent · `m` model · `e` effort · `o` last run · `?` all keys · `q`
-quit. While a plan is being written: `esc` stops it.
+plan · `a` agent · `m` model · `e` effort · `o` last run · `s` settings · `?`
+all keys · `q` quit. While a plan is being written: `esc` stops it.
 
 **Run screen**: `j`/`k` or arrows select a phase · `tab` next view ·
 `PgUp`/`PgDn` scroll · `n` approve · `r` retry · `b` roll back · `m` merge a
-completed run · `x` interrupt · `A` abandon · `esc` home · `?` all keys · `q` quit.
+completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
+all keys · `q` quit.
 
 **Lists and questions**: arrows or `j`/`k` move, `enter` or the row's number
 chooses, `esc` cancels; `y`/`n` answer confirmations. In text fields, `Ctrl-U`

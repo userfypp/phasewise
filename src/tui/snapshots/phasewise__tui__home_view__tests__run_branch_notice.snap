@@ -22,7 +22,7 @@ expression: render(&home).backend()
 " ! You are on the branch of run 20260101-120000; a new run would start from it.                     "
 "   Go back with: git switch main                                                                    "
 "                                                                                                    "
-" p new plan · m model · a agent · e effort · q quit · ? shortcuts                                   "
+" p new plan · m model · a agent · e effort · q quit · s settings · ? shortcuts                      "
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "

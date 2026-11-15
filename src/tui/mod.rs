@@ -10,7 +10,7 @@ pub mod shared;
 pub mod view;
 pub mod widgets;
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -33,6 +33,7 @@ use crate::ops::{
 };
 use crate::plan::AgentKind;
 use crate::process;
+use crate::settings::{self, Settings};
 use crate::state::{PhaseStatus, RunState, RunStatus};
 use crate::style::Styler;
 use app::{App, Command, Tab};
@@ -159,6 +160,9 @@ struct Tui<'a> {
     worker: Option<Worker>,
     last_refresh: Instant,
     refresh_pending: bool,
+    /// A phase or the run ended: ring the bell after the next draw (if the
+    /// setting is on).
+    bell: bool,
     /// Something changed since the last draw. Drawing only then keeps an idle
     /// TUI silent (no output every poll).
     dirty: bool,
@@ -211,7 +215,19 @@ pub fn run_home(cwd: &Path) -> Result<ExitCode> {
 fn launch(cwd: &Path, data: HomeData, run: Option<Run>, screen: Screen) -> Result<ExitCode> {
     let signalled = process::install_signal_handler(None)?;
     start_hangup_watchdog(Arc::clone(&signalled));
-    let mut ui = Ui::new(cwd, Home::new(data), run, screen, signalled);
+    let loaded = settings::load();
+    let mut ui = Ui::new(
+        cwd,
+        Home::with_settings(data, loaded.settings.clone()),
+        run,
+        screen,
+        signalled,
+        loaded.settings,
+    );
+    // A broken settings file is shown, not fatal; the first key clears it.
+    if !loaded.warnings.is_empty() {
+        ui.show_notice(&Notice::warn(loaded.warnings.join(" ")));
+    }
     ui.home.spawn_probes();
     let mut terminal = ratatui::try_init()?;
     let _guard = TerminalGuard;
@@ -330,7 +346,7 @@ impl<'a> HomeTui<'a> {
     /// screen belong to the loop.
     fn execute(&mut self, command: HomeCommand) {
         match command {
-            HomeCommand::Quit | HomeCommand::OpenRun => {}
+            HomeCommand::Quit | HomeCommand::OpenRun | HomeCommand::SaveSettings(_) => {}
             HomeCommand::Start { agent, overrides } => self.start_run(agent, &overrides),
             HomeCommand::Commit => self.spawn_commit(None),
             HomeCommand::CommitAndStart { agent, overrides } => {
@@ -558,6 +574,8 @@ struct Ui<'a> {
     /// The state of the current run, when the repository has one.
     run: Option<Tui<'a>>,
     quitting: bool,
+    /// The user settings in force (the screens hold copies for rendering).
+    settings: Settings,
     /// Left by a second Ctrl-C or `q` while stopping: exit code 130.
     forced: bool,
     /// Set by SIGINT/SIGTERM/SIGHUP (the first one acts like a confirmed quit).
@@ -577,9 +595,10 @@ impl<'a> Ui<'a> {
         run: Option<Run>,
         screen: Screen,
         signalled: Arc<AtomicBool>,
+        settings: Settings,
     ) -> Ui<'a> {
         let run = run.map(|run| {
-            let mut tui = Tui::new(cwd, run);
+            let mut tui = Tui::new(cwd, run, &settings);
             tui.load_caches();
             tui
         });
@@ -588,6 +607,7 @@ impl<'a> Ui<'a> {
             screen,
             home: HomeTui::new(cwd, home),
             run,
+            settings,
             quitting: false,
             forced: false,
             signalled,
@@ -650,16 +670,18 @@ impl<'a> Ui<'a> {
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        // Same rule as the command output: `NO_COLOR` (non-empty) or a dumb
-        // terminal means no colour.
-        let monochrome = !crate::style::color_enabled(
-            true,
-            std::env::var("NO_COLOR").ok().as_deref(),
-            std::env::var("TERM").ok().as_deref(),
-        );
         loop {
             beat();
             self.tick();
+            // Same rule as the command output: `NO_COLOR` (non-empty), a dumb
+            // terminal or `color = never` means no colour. Checked every turn
+            // because the settings menu can change it.
+            let monochrome = !crate::style::color_enabled(
+                true,
+                std::env::var("NO_COLOR").ok().as_deref(),
+                std::env::var("TERM").ok().as_deref(),
+                self.settings.color_never(),
+            );
             if self.visible_dirty() {
                 match (self.screen, &mut self.run) {
                     (Screen::Run, Some(tui)) => {
@@ -681,6 +703,13 @@ impl<'a> Ui<'a> {
                         self.home.dirty = false;
                     }
                 }
+            }
+            if self.take_bell() {
+                // Straight to the terminal, after the frame: the bell is not
+                // part of what ratatui draws.
+                let backend = terminal.backend_mut();
+                let _ = backend.write_all(settings::BELL.as_bytes());
+                let _ = backend.flush();
             }
             if !self.quitting
                 && (self.signalled.load(Ordering::SeqCst) || self.parent.parent_gone())
@@ -757,6 +786,7 @@ impl<'a> Ui<'a> {
                     match command {
                         HomeCommand::Quit => self.quit_now(),
                         HomeCommand::OpenRun => self.open_run(),
+                        HomeCommand::SaveSettings(settings) => self.save_settings(settings),
                         other => self.home.execute(other),
                     }
                 }
@@ -770,11 +800,47 @@ impl<'a> Ui<'a> {
                     match command {
                         Command::Quit => self.quit_now(),
                         Command::Home => self.go_home(),
+                        Command::SaveSettings(settings) => self.save_settings(settings),
                         other => tui.execute(other),
                     }
                 }
             }
         }
+    }
+
+    /// Makes `settings` the ones in force on both screens.
+    fn apply_settings(&mut self, settings: Settings) {
+        self.home.home.settings = settings.clone();
+        if let Some(tui) = &mut self.run {
+            tui.app.settings = settings.clone();
+        }
+        self.settings = settings;
+    }
+
+    /// Applies the settings at once and saves them; a failure is shown and
+    /// the change still holds for this session.
+    fn save_settings(&mut self, settings: Settings) {
+        self.apply_settings(settings.clone());
+        if let Err(err) = settings::save(&settings) {
+            self.show_notice(&Notice::error(format!("Error: {err}")));
+        }
+    }
+
+    /// A message on both screens.
+    fn show_notice(&mut self, notice: &Notice) {
+        self.home.home.message = Some(notice.clone());
+        if let Some(tui) = &mut self.run {
+            tui.app.message = Some(notice.clone());
+        }
+    }
+
+    /// True once per event that rings the bell and only when the setting is on.
+    fn take_bell(&mut self) -> bool {
+        let Some(tui) = &mut self.run else {
+            return false;
+        };
+        let pending = std::mem::take(&mut tui.bell);
+        pending && settings::bell_wanted(self.settings.bell(), true)
     }
 
     /// Interrupts every worker; the loop ends when they have stopped.
@@ -836,7 +902,7 @@ impl<'a> Ui<'a> {
             // A worker belongs to its run: only an idle state is replaced.
             Some(tui) if tui.worker.is_some() => {}
             _ => {
-                let mut tui = Tui::new(self.cwd, run);
+                let mut tui = Tui::new(self.cwd, run, &self.settings);
                 tui.load_caches();
                 self.run = Some(tui);
             }
@@ -853,7 +919,7 @@ impl<'a> Ui<'a> {
             ));
             return;
         }
-        let mut tui = Tui::new(self.cwd, run);
+        let mut tui = Tui::new(self.cwd, run, &self.settings);
         tui.spawn(|run, tx, cancel| ops::execute(run, false, tx, cancel).map(NextOutcome::Ran));
         tui.load_caches();
         self.run = Some(tui);
@@ -870,11 +936,14 @@ impl<'a> Ui<'a> {
 }
 
 impl<'a> Tui<'a> {
-    fn new(cwd: &'a Path, run: Run) -> Tui<'a> {
+    fn new(cwd: &'a Path, run: Run, settings: &Settings) -> Tui<'a> {
+        let mut app = App::new(data::load_run_view(&run));
+        app.settings = settings.clone();
         Tui {
             cwd,
-            app: App::new(data::load_run_view(&run)),
+            app,
             run,
+            bell: false,
             worker: None,
             last_refresh: Instant::now(),
             refresh_pending: false,
@@ -888,7 +957,7 @@ impl Tui<'_> {
     /// the loop.
     fn execute(&mut self, command: Command) {
         match command {
-            Command::Quit | Command::Home => {}
+            Command::Quit | Command::Home | Command::SaveSettings(_) => {}
             Command::Reload => self.refresh(),
             Command::Interrupt => {
                 self.interrupt();
@@ -1039,6 +1108,8 @@ impl Tui<'_> {
         });
         self.app.running = None;
         self.refresh();
+        // A phase that needs the user, or the end of the run.
+        self.bell = matches!(result, Ok(Finished::Phase(_)));
         self.app.message = Some(match result {
             Ok(Finished::Merged(outcome)) => merge_notice(&outcome),
             Ok(Finished::Phase(outcome)) => outcome_notice(&Ok(outcome), &self.run.state),

@@ -21,4 +21,4 @@ expression: terminal.backend()
 "   git add phasewise.md && git commit -m "Add phasewise plan"                   "
 "                                                                                "
 " ✗ Could not read the plan.                                                     "
-" p new plan · a agent · m model · e effort · q quit · ? shortcuts               "
+" p new plan · a agent · m model · e effort · q quit · s settings · ? shortcuts  "

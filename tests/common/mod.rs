@@ -19,6 +19,10 @@ pub fn isolated_git_env() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// A user settings directory that does not exist: the tests never read the
+/// real one (a missing settings file means the defaults).
+pub const NO_CONFIG_DIR: &str = "/nonexistent/phasewise-config";
+
 fn isolate(cmd: &mut Command) {
     cmd.envs(isolated_git_env())
         .env_remove("PHASEWISE_CLAUDE_BIN")
@@ -92,6 +96,7 @@ impl TestRepo {
         let mut cmd = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("phasewise"));
         cmd.current_dir(self.path())
             .envs(isolated_git_env())
+            .env("PHASEWISE_CONFIG_DIR", NO_CONFIG_DIR)
             .env_remove("PHASEWISE_CLAUDE_BIN")
             .env_remove("PHASEWISE_CODEX_BIN");
         cmd

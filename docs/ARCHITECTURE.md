@@ -55,11 +55,12 @@ check runs as a child process in its own process group.
 | `state.rs` | `state.json`, the `.phasewise` layout, atomic writes, the run lock and recovery. |
 | `process.rs` | Process groups, termination, signals, the panic hook, the closed-terminal watch. |
 | `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths. |
-| `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset and `TERM` not `dumb`. The TUI follows the same rule: when colour is off, `widgets::strip_color` clears every colour of a drawn frame and turns the dim grey into the dim attribute. |
+| `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset, `TERM` not `dumb` and the `color` setting not `never`. The TUI follows the same rule: when colour is off, `widgets::strip_color` clears every colour of a drawn frame and turns the dim grey into the dim attribute. |
+| `settings.rs` | User settings: the registry (one table entry per setting), `settings.toml` in the user's configuration directory, validation, atomic save, the bell decision. |
 | `doctor.rs` | `phasewise doctor`. |
 | `tui/mod.rs` | The TUI's event loop: terminal setup and restore, the two screens, worker threads, refreshes. |
 | `tui/home.rs`, `tui/app.rs` | Pure state machines for the home and run screens: a key in, a command out, no I/O. |
-| `tui/shared.rs` | State and helpers both screens use (popups, footer items, spinner timing). |
+| `tui/shared.rs` | State and helpers both screens use (popups, footer items, spinner timing, the settings popup's state machine). |
 | `tui/data.rs` | Read-only loaders: home data, run, diff, log and checks. |
 | `tui/home_view.rs`, `tui/view.rs`, `tui/widgets.rs` | Rendering with ratatui: the home screen, the run screen, and the pieces they share. Covered by `insta` snapshots. |
 
@@ -225,6 +226,13 @@ These hold everywhere. A change that breaks one is a design change.
   That commit runs the user's hooks and signing like any commit of theirs;
   checkpoints skip both (`--no-verify --no-gpg-sign`) because they are
   phasewise's own bookkeeping.
+- **The only file written outside `.phasewise/` is the user settings file**
+  (`settings.toml`, see `settings.rs`), and only when the user changes a
+  setting. It is written atomically; a file that is not valid TOML is never
+  overwritten without keeping a copy as `settings.toml.bak`. Settings only
+  fill in what environment variables, command-line flags and the plan leave
+  open. The TUI keeps the settings in force in its loop and copies them to
+  both screens; a change is a command (`SaveSettings`) the loop executes.
 - **Reads never block writes.** Every git command runs with
   `GIT_OPTIONAL_LOCKS=0`, so the TUI's `status` and `diff` refreshes never hold
   `index.lock` while a checkpoint is committed. A command that still meets a

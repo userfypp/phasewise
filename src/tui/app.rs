@@ -4,8 +4,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::data::{DiffView, LogLine, RunView};
 use super::shared::{
-    Choice, FooterItem, Notice, ShortcutGroups, confirm_key, edit_text, item, picker_footer,
+    Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
+    confirm_key, edit_text, item, picker_footer,
 };
+use crate::settings::Settings;
 use crate::state::PhaseStatus;
 
 const DEFAULT_PAGE: u16 = 10;
@@ -51,6 +53,8 @@ pub enum Mode {
     Note(String),
     /// Popup listing every key.
     Help,
+    /// The user settings menu.
+    Settings(SettingsPanel),
 }
 
 /// What the event loop must do after a key.
@@ -67,6 +71,8 @@ pub enum Command {
     Merge,
     /// Go back to the home screen.
     Home,
+    /// Save these settings; they already apply on this screen.
+    SaveSettings(Settings),
     /// Reload the caches of the (newly) selected phase.
     Reload,
 }
@@ -91,6 +97,8 @@ pub struct App {
     /// Spinner frame, set by the loop from the elapsed time.
     pub frame: usize,
     pub message: Option<Notice>,
+    /// The user settings (what the screen shows depends on them).
+    pub settings: Settings,
     pub diff: DiffView,
     pub log: Vec<LogLine>,
     pub verify: String,
@@ -121,6 +129,7 @@ impl App {
             planning_busy: false,
             frame: 0,
             message: None,
+            settings: Settings::default(),
             diff: DiffView::default(),
             log: Vec::new(),
             verify: String::new(),
@@ -192,6 +201,26 @@ impl App {
                 self.mode = Mode::Normal;
                 None
             }
+            Mode::Settings(panel) => self.key_settings(key, panel),
+        }
+    }
+
+    fn key_settings(&mut self, key: KeyEvent, mut panel: SettingsPanel) -> Option<Command> {
+        match panel.handle_key(key) {
+            PanelOutcome::Close => {
+                self.mode = Mode::Normal;
+                None
+            }
+            PanelOutcome::Stay => {
+                self.mode = Mode::Settings(panel);
+                None
+            }
+            PanelOutcome::Changed => {
+                self.settings = panel.settings.clone();
+                let command = Command::SaveSettings(panel.settings.clone());
+                self.mode = Mode::Settings(panel);
+                Some(command)
+            }
         }
     }
 
@@ -244,6 +273,10 @@ impl App {
             KeyCode::Char('A') => self.abandon(),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                None
+            }
+            KeyCode::Char('s') => {
+                self.mode = Mode::Settings(SettingsPanel::new(self.settings.clone()));
                 None
             }
             KeyCode::Char('j') | KeyCode::Down => self.select(1),
@@ -418,7 +451,8 @@ impl App {
     /// Footer items for the current state, highest priority first. The `?`
     /// item is not in the list: the renderer appends it.
     pub fn footer(&self) -> Vec<FooterItem> {
-        match self.mode {
+        match &self.mode {
+            Mode::Settings(panel) => return panel.footer(),
             Mode::ConfirmRollback(..)
             | Mode::ConfirmInterrupt(_)
             | Mode::ConfirmQuit(_)
@@ -428,7 +462,12 @@ impl App {
             Mode::Help => return vec![item("any key", "close")],
             Mode::Normal => {}
         }
-        let tail = [item("tab", "view"), item("esc", "home"), item("q", "quit")];
+        let tail = [
+            item("tab", "view"),
+            item("esc", "home"),
+            item("q", "quit"),
+            item("s", "settings"),
+        ];
         let mut keys = Vec::new();
         let status = self.view.phases.get(self.selected).map(|p| p.status);
         if self.running.is_some() {
@@ -477,6 +516,7 @@ impl App {
                 vec![
                     ("esc", "back to the home screen"),
                     ("?", "show or hide the shortcuts"),
+                    SETTINGS_SHORTCUT,
                     ("q / Ctrl-C", "quit"),
                 ],
             ),
@@ -783,21 +823,21 @@ mod tests {
     #[test]
     fn footer_follows_the_state() {
         let a = reviewing();
-        assert_eq!(keys(&a), ["n", "r", "b", "tab", "esc", "q"]);
+        assert_eq!(keys(&a), ["n", "r", "b", "tab", "esc", "q", "s"]);
         let mut running = reviewing();
         running.running = Some(3);
-        assert_eq!(keys(&running), ["x", "tab", "esc", "q"]);
+        assert_eq!(keys(&running), ["x", "tab", "esc", "q", "s"]);
         let failed = app(vec![
             phase(1, PhaseStatus::Done, true),
             phase(2, PhaseStatus::Failed, false),
         ]);
-        assert_eq!(keys(&failed), ["r", "b", "tab", "esc", "q"]);
+        assert_eq!(keys(&failed), ["r", "b", "tab", "esc", "q", "s"]);
         let mut other = reviewing();
         other.selected = 0;
-        assert_eq!(keys(&other), ["j/k", "tab", "esc", "q"]);
+        assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);
         other.view.active = false;
         other.selected = 1;
-        assert_eq!(keys(&other), ["j/k", "tab", "esc", "q"]);
+        assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);
         let mut note = reviewing();
         note.mode = Mode::Note(String::new());
         assert_eq!(keys(&note), ["enter", "esc"]);
@@ -873,9 +913,9 @@ mod tests {
     fn the_footer_offers_merge_only_for_a_completed_run() {
         let mut a = app(vec![phase(1, PhaseStatus::Done, true)]);
         let keys = |a: &App| a.footer().into_iter().map(|(k, _)| k).collect::<Vec<_>>();
-        assert_eq!(keys(&a), ["j/k", "tab", "esc", "q"]);
+        assert_eq!(keys(&a), ["j/k", "tab", "esc", "q", "s"]);
         a.view.completed = true;
-        assert_eq!(keys(&a), ["m", "j/k", "tab", "esc", "q"]);
+        assert_eq!(keys(&a), ["m", "j/k", "tab", "esc", "q", "s"]);
         a.mode = Mode::ConfirmMerge(0);
         assert_eq!(keys(&a), ["enter", "1–2", "esc"]);
     }
@@ -990,5 +1030,43 @@ mod tests {
         a.handle_key(key('?'));
         assert_eq!(a.handle_key(key('?')), None);
         assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn s_opens_the_settings_and_a_change_is_applied_and_saved() {
+        let mut a = reviewing();
+        assert_eq!(a.handle_key(key('s')), None);
+        assert!(matches!(a.mode, Mode::Settings(_)));
+        assert_eq!(keys(&a), ["enter", "j/k", "esc"]);
+        // The first row is `limits`: toggling it applies at once.
+        assert!(a.settings.limits());
+        let command = a.handle_key(code(KeyCode::Enter));
+        assert!(!a.settings.limits());
+        let Some(Command::SaveSettings(saved)) = command else {
+            panic!("expected SaveSettings, got {command:?}");
+        };
+        assert!(!saved.limits());
+        assert!(matches!(a.mode, Mode::Settings(_)), "the popup stays open");
+        assert_eq!(a.handle_key(code(KeyCode::Esc)), None);
+        assert_eq!(a.mode, Mode::Normal);
+        // `s` closes it too, and Ctrl-C closes it and quits.
+        a.handle_key(key('s'));
+        assert_eq!(a.handle_key(key('s')), None);
+        assert_eq!(a.mode, Mode::Normal);
+        a.handle_key(key('s'));
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(a.handle_key(ctrl_c), Some(Command::Quit));
+    }
+
+    #[test]
+    fn the_footer_and_the_shortcuts_offer_the_settings() {
+        let a = reviewing();
+        assert!(a.footer().contains(&item("s", "settings")));
+        assert!(
+            App::shortcuts()
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .any(|(k, _)| *k == "s")
+        );
     }
 }

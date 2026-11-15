@@ -17,7 +17,7 @@ expression: render(&home).backend()
 " · Writing the plan with Claude Code… 0s                                                            "
 "   ⎿ Read Cargo.toml                                                                                "
 "                                                                                                    "
-" esc stop · q quit · ? shortcuts                                                                    "
+" esc stop · q quit · s settings · ? shortcuts                                                       "
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "

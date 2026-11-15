@@ -15,7 +15,7 @@ use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, PickerRow, accent, bold, confirm_popup, dim, draw_too_small,
     duration_text, elapsed_since, error_popup, event_text, footer_line, input_popup, limit_spans,
     margin, notice_line, pad_to, picker_lines, render_card, render_popup, role_style,
-    shortcuts_popup, text_width, truncate, wrap_text,
+    settings_popup, shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{model_name, phase_count, status_label};
 use crate::plan::AgentKind;
@@ -374,6 +374,7 @@ fn settings_section(home: &Home, width: usize) -> Vec<Line<'static>> {
         ),
     ];
     if home.agent == AgentKind::Claude
+        && home.settings.limits()
         && let Some(limits) = home.data.limits.as_ref().filter(|l| l.agent == home.agent)
     {
         let mut spans = vec![label("Limits")];
@@ -484,6 +485,7 @@ fn draw_popup(frame: &mut Frame, home: &Home, area: Rect) {
     let popup = match &home.mode {
         Mode::Normal => return,
         Mode::Help => shortcuts_popup(&Home::shortcuts()),
+        Mode::Settings(panel) => settings_popup(panel, area.width),
         Mode::ConfirmQuit(row) => confirm_popup(
             "Quit phasewise?",
             if home.planning.is_some() {
@@ -638,9 +640,10 @@ pub(super) mod tests {
     use crate::agent::ModelInfo;
     use crate::display::plan_event_line;
     use crate::ops::PlanEvent;
+    use crate::settings::Settings;
     use crate::state::{PhaseStatus, RunStatus};
     use crate::tui::data::{HomeData, HomePhase, PlanProblem, RunPhaseSummary};
-    use crate::tui::shared::Notice;
+    use crate::tui::shared::{Notice, SettingsPanel};
 
     pub(in crate::tui) fn data(plan: PlanState) -> HomeData {
         HomeData {
@@ -986,6 +989,110 @@ pub(super) mod tests {
         let mut home = home(valid_plan());
         home.mode = Mode::Help;
         insta::assert_snapshot!(render(&home).backend());
+    }
+
+    /// Home screen with the settings popup open on `selected`, after `change`.
+    fn settings_home(change: impl FnOnce(&mut SettingsPanel)) -> Home {
+        let mut home = home(valid_plan());
+        let mut panel = SettingsPanel::new(Settings::default());
+        change(&mut panel);
+        home.mode = Mode::Settings(panel);
+        home
+    }
+
+    /// Row, left column, right column and bottom row of the settings popup's
+    /// frame (found by its title).
+    pub(in crate::tui) fn popup_rect(screen: &str) -> (usize, usize, usize, usize) {
+        let col = |line: &str, c: char| line.chars().position(|x| x == c);
+        let title = screen
+            .lines()
+            .position(|l| l.contains("│ Settings"))
+            .expect("title");
+        let top = title - 1;
+        let bottom = title
+            + screen
+                .lines()
+                .skip(title)
+                .position(|l| l.contains('╰'))
+                .expect("bottom");
+        let line = screen.lines().nth(top).expect("line");
+        (
+            top,
+            col(line, '╭').expect("left"),
+            col(line, '╮').expect("right"),
+            bottom,
+        )
+    }
+
+    #[test]
+    fn settings_popup_default_state() {
+        let home = settings_home(|_| {});
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn settings_popup_with_a_toggled_bool() {
+        let home = settings_home(|panel| {
+            panel.settings.cycle("bell");
+            panel.selected = 1;
+        });
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn settings_popup_with_an_enum_at_its_longest_value() {
+        let home = settings_home(|panel| {
+            panel.settings.set("effort", "medium").expect("valid");
+            panel.settings.set("agent", "claude").expect("valid");
+            panel.selected = 5;
+        });
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn settings_popup_editing_a_long_model_with_an_error() {
+        let home = settings_home(|panel| {
+            panel.selected = 4;
+            panel.editing = Some("a-very-long-model-name-that-does-not-fit-in-the-column".into());
+            panel.error = Some("Invalid value for `model`: it has a space.".into());
+        });
+        insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn the_settings_popup_never_changes_its_rectangle() {
+        let states: Vec<Home> = vec![
+            settings_home(|_| {}),
+            settings_home(|p| {
+                p.settings.cycle("bell");
+                p.selected = 1;
+            }),
+            settings_home(|p| {
+                p.settings.set("effort", "medium").expect("valid");
+                p.selected = 5;
+            }),
+            settings_home(|p| {
+                p.settings.set("model", "opus").expect("valid");
+                p.selected = 4;
+                p.editing = Some("a-very-long-model-name-that-does-not-fit-in-the-column".into());
+                p.error = Some("Invalid value for `model`: it has a space. Try again.".into());
+            }),
+            settings_home(|p| p.selected = 3),
+        ];
+        let rects: Vec<_> = states
+            .iter()
+            .map(|h| popup_rect(&format!("{}", render_sized(h, 100, 30).backend())))
+            .collect();
+        assert!(rects.windows(2).all(|w| w[0] == w[1]), "{rects:?}");
+    }
+
+    #[test]
+    fn limits_are_hidden_when_the_setting_is_off() {
+        let mut home = home(valid_plan());
+        home.data.limits = Some(sample_limits(false));
+        home.settings.set("limits", "off").expect("valid");
+        let text = format!("{}", render(&home).backend());
+        assert!(!text.contains("Limits"), "{text}");
     }
 
     #[test]

@@ -312,6 +312,41 @@ fn status_shows_the_limits_the_agent_reported() {
 }
 
 #[test]
+fn status_hides_the_limits_when_the_setting_is_off() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let config = tempfile::tempdir().expect("config dir");
+    std::fs::write(config.path().join("settings.toml"), "limits = false\n").expect("settings");
+    let envs = [(
+        "PHASEWISE_CONFIG_DIR",
+        config.path().to_str().expect("utf-8"),
+    )];
+
+    let shown = env.ok(&["status"], &[]).stdout;
+    assert!(shown.lines().any(|l| l.starts_with("Limits: ")), "{shown}");
+    let hidden = env.ok(&["status"], &envs).stdout;
+    assert!(!hidden.contains("Limits:"), "{hidden}");
+    let json: Value =
+        serde_json::from_str(&env.ok(&["status", "--json"], &envs).stdout).expect("status json");
+    assert_eq!(json["limits"], Value::Null);
+}
+
+#[test]
+fn the_bell_is_never_written_when_stderr_is_not_a_terminal() {
+    let env = Env::new();
+    let config = tempfile::tempdir().expect("config dir");
+    std::fs::write(config.path().join("settings.toml"), "bell = true\n").expect("settings");
+    let envs = [(
+        "PHASEWISE_CONFIG_DIR",
+        config.path().to_str().expect("utf-8"),
+    )];
+    let out = env.ok(&["run"], &envs);
+    assert!(!out.stderr.contains('\x07') && !out.stdout.contains('\x07'));
+    let out = env.ok(&["next"], &envs);
+    assert!(!out.stderr.contains('\x07') && !out.stdout.contains('\x07'));
+}
+
+#[test]
 fn logs_describe_a_failed_phase() {
     let env = Env::new();
     assert_eq!(env.exec(&["logs"], &[]).code, 1);

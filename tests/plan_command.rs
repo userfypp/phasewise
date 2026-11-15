@@ -373,6 +373,7 @@ fn a_signal_cancels_the_planning_session() {
     let child = Command::new(assert_cmd::cargo::cargo_bin!("phasewise"))
         .current_dir(env.repo.path())
         .envs(common::isolated_git_env())
+        .env("PHASEWISE_CONFIG_DIR", common::NO_CONFIG_DIR)
         .args(["plan", "goal"])
         .env("PHASEWISE_CLAUDE_BIN", FAKE_CLAUDE)
         .env("FAKE_LOG_DIR", env.logs.path())

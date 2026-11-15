@@ -26,21 +26,31 @@ pub struct Styler {
 }
 
 /// Pure decision behind [`Styler::for_stdout`]: colour needs a terminal, an
-/// unset or empty `NO_COLOR` and a `TERM` other than `dumb`.
-pub fn color_enabled(is_terminal: bool, no_color: Option<&str>, term: Option<&str>) -> bool {
-    is_terminal && no_color.is_none_or(str::is_empty) && term != Some("dumb")
+/// unset or empty `NO_COLOR`, a `TERM` other than `dumb` and a `color` setting
+/// other than `never`. The environment wins: the setting can only turn colour
+/// off, never on.
+pub fn color_enabled(
+    is_terminal: bool,
+    no_color: Option<&str>,
+    term: Option<&str>,
+    never: bool,
+) -> bool {
+    is_terminal && no_color.is_none_or(str::is_empty) && term != Some("dumb") && !never
 }
 
 impl Styler {
     pub fn for_stdout() -> Styler {
         let no_color = std::env::var("NO_COLOR").ok();
         let term = std::env::var("TERM").ok();
+        let env_allows = color_enabled(
+            std::io::stdout().is_terminal(),
+            no_color.as_deref(),
+            term.as_deref(),
+            false,
+        );
+        // The file is only read when colour is still possible.
         Styler {
-            color: color_enabled(
-                std::io::stdout().is_terminal(),
-                no_color.as_deref(),
-                term.as_deref(),
-            ),
+            color: env_allows && !crate::settings::current().color_never(),
         }
     }
 
@@ -134,12 +144,19 @@ mod tests {
 
     #[test]
     fn colour_needs_a_terminal_no_no_color_and_a_real_term() {
-        assert!(color_enabled(true, None, Some("xterm-256color")));
-        assert!(color_enabled(true, None, None));
-        assert!(color_enabled(true, Some(""), Some("xterm")));
-        assert!(!color_enabled(false, None, Some("xterm")));
-        assert!(!color_enabled(true, Some("1"), Some("xterm")));
-        assert!(!color_enabled(true, Some("anything"), None));
-        assert!(!color_enabled(true, None, Some("dumb")));
+        assert!(color_enabled(true, None, Some("xterm-256color"), false));
+        assert!(color_enabled(true, None, None, false));
+        assert!(color_enabled(true, Some(""), Some("xterm"), false));
+        assert!(!color_enabled(false, None, Some("xterm"), false));
+        assert!(!color_enabled(true, Some("1"), Some("xterm"), false));
+        assert!(!color_enabled(true, Some("anything"), None, false));
+        assert!(!color_enabled(true, None, Some("dumb"), false));
+    }
+
+    #[test]
+    fn the_never_setting_turns_colour_off_and_never_on() {
+        assert!(!color_enabled(true, None, Some("xterm"), true));
+        assert!(!color_enabled(false, None, Some("xterm"), true));
+        assert!(!color_enabled(true, Some("1"), Some("xterm"), true));
     }
 }

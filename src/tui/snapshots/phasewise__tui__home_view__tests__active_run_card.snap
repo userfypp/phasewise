@@ -12,7 +12,7 @@ expression: render(&home).backend()
 " ✶  2  Add the parser         running                                                               "
 " ·  3  Write the docs                                                                               "
 "                                                                                                    "
-" enter open run · q quit · ? shortcuts                                                              "
+" enter open run · q quit · s settings · ? shortcuts                                                 "
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "

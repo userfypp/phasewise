@@ -23,6 +23,7 @@ use crate::git::Git;
 use crate::ops::{self, NextOutcome, Overrides, PlanEvent, PlanRequest, PlanResult, Run};
 use crate::plan::{self, AgentKind};
 use crate::process;
+use crate::settings;
 use crate::state::{PhaseStatus, RunState, RunStatus};
 use crate::style::{Role, Styler};
 
@@ -232,9 +233,35 @@ pub enum Command {
         shell: clap_complete::Shell,
     },
 
+    /// Show or change the user settings (limits, bell, colour, home screen defaults)
+    #[command(
+        after_help = "Examples:\n  phasewise settings\n  phasewise settings set bell on\n  phasewise settings reset bell"
+    )]
+    Settings {
+        #[command(subcommand)]
+        action: Option<SettingsAction>,
+    },
+
     /// Mark the run as abandoned and return to the original branch (the run branch is kept)
     #[command(after_help = "Examples:\n  phasewise abort")]
     Abort,
+}
+
+/// What `phasewise settings` does.
+#[derive(Debug, Subcommand)]
+pub enum SettingsAction {
+    /// Change one setting and save it
+    Set {
+        /// Setting name (see `phasewise settings`)
+        key: String,
+        /// New value
+        value: String,
+    },
+    /// Go back to the default of one setting, or of all of them
+    Reset {
+        /// Setting name (default: all)
+        key: Option<String>,
+    },
 }
 
 /// Entry point called from `main`.
@@ -311,6 +338,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Diff { n }) => diff(n),
         Some(Command::Logs { n }) => logs(n),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
+        Some(Command::Settings { action }) => settings_command(action),
         Some(Command::Abort) => abort_command(),
     }
 }
@@ -984,6 +1012,8 @@ where
 }
 
 fn report_outcome(run: &Run, outcome: NextOutcome) -> ExitCode {
+    // Every outcome is a stop that needs the user: review, failure or the end.
+    ring_bell();
     match outcome {
         NextOutcome::Completed => {
             let state = &run.state;
@@ -1122,8 +1152,12 @@ fn status_json(run: &Run) -> Result<String> {
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
-/// The usage limits last reported by the run's agent, if any.
+/// The usage limits last reported by the run's agent, if any and if the
+/// `limits` setting is on.
 fn run_limits(run: &Run) -> Option<crate::state::RateLimits> {
+    if !settings::current().limits() {
+        return None;
+    }
     crate::state::RateLimits::load(run.git.root()).filter(|l| l.agent == run.state.agent)
 }
 
@@ -1266,6 +1300,119 @@ fn status(json: bool) -> Result<ExitCode> {
     outln!();
     outln!("{}", st.dim(&next_step_hint(&run)));
     Ok(ExitCode::SUCCESS)
+}
+
+/// `phasewise settings [set|reset]`. Plain output: no colour.
+fn settings_command(action: Option<SettingsAction>) -> Result<ExitCode> {
+    let path = settings::require_path()?;
+    let loaded = settings::load_from(&path);
+    for warning in &loaded.warnings {
+        eprintln!("warning: {warning}");
+    }
+    let mut current = loaded.settings;
+    match action {
+        None => {
+            print_settings(&current, &path);
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(SettingsAction::Set { key, value }) => {
+            current.set(&key, &value).map_err(|e| anyhow!(e))?;
+            save_settings(&path, &current)?;
+            if let Some(spec) = settings::spec(&key) {
+                let value = settings::shown(spec, &current.get(&key));
+                outln!("{key} = {value}");
+            }
+        }
+        Some(SettingsAction::Reset { key }) => {
+            if let Some(key) = &key
+                && settings::spec(key).is_none()
+            {
+                return Err(anyhow!(settings::unknown_key(key)));
+            }
+            // A file with problems is replaced by the defaults (its copy is kept).
+            let had_problems = !loaded.warnings.is_empty();
+            if current.reset(key.as_deref()) || had_problems {
+                save_settings(&path, &current)?;
+            }
+            match key {
+                Some(key) => outln!("{key} is back to its default."),
+                None => outln!("All settings are back to their defaults."),
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn save_settings(path: &Path, current: &settings::Settings) -> Result<()> {
+    if let Some(backup) = settings::save_to(path, current)? {
+        eprintln!(
+            "warning: the previous settings file was not valid; a copy is kept as {}.",
+            backup.display()
+        );
+    }
+    Ok(())
+}
+
+fn print_settings(current: &settings::Settings, path: &Path) {
+    let rows: Vec<[String; 4]> = settings::REGISTRY
+        .iter()
+        .map(|spec| {
+            [
+                spec.key.to_string(),
+                settings::shown(spec, &current.get(spec.key)),
+                settings::shown(spec, spec.default),
+                spec.description.to_string(),
+            ]
+        })
+        .collect();
+    let headers = ["KEY", "VALUE", "DEFAULT", "DESCRIPTION"];
+    let mut widths = headers.map(str::len);
+    for row in &rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    let line = |mark: &str, cells: [&str; 4]| {
+        let [key, value, default, description] = cells;
+        outln!(
+            "{mark} {key:<k$}  {value:<v$}  {default:<d$}  {description}",
+            k = widths[0],
+            v = widths[1],
+            d = widths[2]
+        );
+    };
+    let state = if path.exists() {
+        ""
+    } else {
+        " (not created yet: every setting has its default)"
+    };
+    outln!("Settings file: {}{state}", path.display());
+    outln!("A * marks a setting that differs from its default.");
+    outln!();
+    line(" ", headers);
+    for (spec, row) in settings::REGISTRY.iter().zip(&rows) {
+        let mark = if current.is_changed(spec.key) {
+            "*"
+        } else {
+            " "
+        };
+        line(mark, [&row[0], &row[1], &row[2], &row[3]]);
+    }
+    outln!();
+    outln!(
+        "Change one with `phasewise settings set <key> <value>`; `phasewise settings reset [key]` removes it."
+    );
+}
+
+/// Rings the terminal bell on stderr when the setting is on and stderr is a
+/// terminal; the phase that ended needs the user.
+fn ring_bell() {
+    let stderr = std::io::stderr();
+    if settings::bell_wanted(settings::current().bell(), stderr.is_terminal()) {
+        let mut stderr = stderr.lock();
+        let _ = stderr.write_all(settings::BELL.as_bytes());
+        let _ = stderr.flush();
+    }
 }
 
 fn status_role(status: PhaseStatus) -> Role {
