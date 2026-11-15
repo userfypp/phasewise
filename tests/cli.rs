@@ -43,7 +43,10 @@ fn version_long_flag() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("phasewise 0.1.0"));
+        .stdout(predicate::str::contains(concat!(
+            "phasewise ",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
@@ -52,7 +55,10 @@ fn version_short_flag() {
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("phasewise 0.1.0"));
+        .stdout(predicate::str::contains(concat!(
+            "phasewise ",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
