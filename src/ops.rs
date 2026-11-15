@@ -537,7 +537,7 @@ fn check_model_override(run: &Run, overrides: &Overrides, number: usize) -> Resu
 /// Holds the run lock for the whole operation.
 pub fn next(
     run: &mut Run,
-    auto: bool,
+    chain: Chain,
     overrides: &Overrides,
     events: &Sender<EngineEvent>,
     cancel: &AtomicBool,
@@ -552,6 +552,10 @@ pub fn next(
         .map(|p| p.number)
     {
         check_model_override(run, overrides, pending)?;
+        // Before approving, so a bad `--until` leaves the review open.
+        if let Chain::Until(stop) = chain {
+            check_until(stop, pending, run.state.phases.len())?;
+        }
     }
     overrides.apply(&mut run.state);
     // Only needed when a phase will run (completing the run commits nothing).
@@ -578,7 +582,7 @@ pub fn next(
             return Ok(NextOutcome::Completed);
         }
     }
-    execute_locked(run, auto, events, cancel).map(NextOutcome::Ran)
+    execute_locked(run, chain, events, cancel).map(NextOutcome::Ran)
 }
 
 /// The run must be active. For callers that hold the run lock (a live lock is
@@ -943,25 +947,73 @@ fn run_one(
     run_phase(&mut ctx, number, note)
 }
 
-/// Runs the first pending phase. With `auto`, approves each phase that reaches
-/// `awaiting_review` and continues while phases remain; the last one stays
-/// `awaiting_review`. Stops at the first failure or on cancellation. Holds the
-/// run lock for the whole chain.
+/// How many phases `execute` and `next` run before stopping for review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chain {
+    /// One phase.
+    One,
+    /// Every phase (`--auto`): each one that reaches `awaiting_review` is
+    /// approved, up to the last.
+    All,
+    /// Up to this phase (`--until N`), which stays `awaiting_review`.
+    Until(usize),
+}
+
+impl Chain {
+    /// The chain the flags ask for; `--until` wins over `--auto`.
+    pub fn from_flags(auto: bool, until: Option<usize>) -> Chain {
+        match (until, auto) {
+            (Some(stop), _) => Chain::Until(stop),
+            (None, true) => Chain::All,
+            (None, false) => Chain::One,
+        }
+    }
+}
+
+/// `--until` must name a phase from the one about to run to the last one.
+pub fn check_until(stop: usize, first: usize, last: usize) -> Result<()> {
+    if (first..=last).contains(&stop) {
+        return Ok(());
+    }
+    if first == last {
+        bail!(
+            "--until {stop} is out of range: only phase {last} is left to run. Use --until {last}."
+        )
+    }
+    bail!(
+        "--until {stop} is out of range: it must be a phase from {first} (the next one to run) to {last} (the last). Use a number in that range."
+    )
+}
+
+/// Runs the first pending phase. With a longer `chain`, approves each phase
+/// that reaches `awaiting_review` and continues while phases remain and the
+/// stop phase has not run; the last phase stays `awaiting_review`. Stops at the
+/// first failure or on cancellation. Holds the run lock for the whole chain.
 pub fn execute(
     run: &mut Run,
-    auto: bool,
+    chain: Chain,
     events: &Sender<EngineEvent>,
     cancel: &AtomicBool,
 ) -> Result<PhaseStatus> {
     let _lock = lock_and_reload(run)?;
     check_active(run)?;
     run.git.check_identity()?;
-    execute_locked(run, auto, events, cancel)
+    if let (Chain::Until(stop), Some(first)) = (
+        chain,
+        run.state
+            .phases
+            .iter()
+            .find(|p| p.status == PhaseStatus::Pending)
+            .map(|p| p.number),
+    ) {
+        check_until(stop, first, run.state.phases.len())?;
+    }
+    execute_locked(run, chain, events, cancel)
 }
 
 fn execute_locked(
     run: &mut Run,
-    auto: bool,
+    chain: Chain,
     events: &Sender<EngineEvent>,
     cancel: &AtomicBool,
 ) -> Result<PhaseStatus> {
@@ -981,7 +1033,15 @@ fn execute_locked(
             .phases
             .iter()
             .any(|p| p.status == PhaseStatus::Pending);
-        if !auto || status != PhaseStatus::AwaitingReview || !more || cancel.load(Ordering::SeqCst)
+        let stopped = match chain {
+            Chain::One => true,
+            Chain::All => false,
+            Chain::Until(stop) => number >= stop,
+        };
+        if stopped
+            || status != PhaseStatus::AwaitingReview
+            || !more
+            || cancel.load(Ordering::SeqCst)
         {
             return Ok(status);
         }
@@ -1358,6 +1418,22 @@ fn check_plan_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn until_wins_over_auto_and_must_be_in_range() {
+        assert_eq!(Chain::from_flags(false, None), Chain::One);
+        assert_eq!(Chain::from_flags(true, None), Chain::All);
+        assert_eq!(Chain::from_flags(true, Some(2)), Chain::Until(2));
+        assert_eq!(Chain::from_flags(false, Some(2)), Chain::Until(2));
+        assert!(check_until(2, 2, 4).is_ok());
+        assert!(check_until(4, 2, 4).is_ok());
+        let low = check_until(1, 2, 4).unwrap_err().to_string();
+        assert!(low.contains("from 2") && low.contains("to 4"), "{low}");
+        assert!(check_until(5, 2, 4).is_err());
+        assert!(check_until(0, 1, 3).is_err());
+        let only = check_until(2, 3, 3).unwrap_err().to_string();
+        assert!(only.contains("--until 3"), "{only}");
+    }
 
     #[test]
     fn flags_are_validated_and_default_clears() {

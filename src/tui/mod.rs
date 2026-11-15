@@ -920,7 +920,9 @@ impl<'a> Ui<'a> {
             return;
         }
         let mut tui = Tui::new(self.cwd, run, &self.settings);
-        tui.spawn(|run, tx, cancel| ops::execute(run, false, tx, cancel).map(NextOutcome::Ran));
+        tui.spawn(|run, tx, cancel| {
+            ops::execute(run, ops::Chain::One, tx, cancel).map(NextOutcome::Ran)
+        });
         tui.load_caches();
         self.run = Some(tui);
         self.home.reload(true);
@@ -967,7 +969,7 @@ impl Tui<'_> {
                 }));
             }
             Command::Next => self.spawn(|run, tx, cancel| {
-                ops::next(run, false, &ops::Overrides::default(), tx, cancel)
+                ops::next(run, ops::Chain::One, &ops::Overrides::default(), tx, cancel)
             }),
             Command::Retry(note) => self.spawn(move |run, tx, cancel| {
                 ops::retry(run, note.as_deref(), &ops::Overrides::default(), tx, cancel)

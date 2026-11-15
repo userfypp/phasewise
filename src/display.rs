@@ -351,6 +351,17 @@ pub fn money(cost: f64) -> String {
     }
 }
 
+/// A duration as `45s`, `2m 05s` or `1h 03m`; fractions of a second are dropped.
+pub fn duration(secs: u64) -> String {
+    if secs >= 3600 {
+        format!("{}h {:02}m", secs / 3600, secs % 3600 / 60)
+    } else if secs >= 60 {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
 /// Limits seen longer ago than this get a `seen HH:MM` note.
 const LIMITS_STALE_SECS: i64 = 600;
 
@@ -584,6 +595,20 @@ mod tests {
             ],
         );
         limits_text(&l, Timestamp::from_second(secs).unwrap(), tz)
+    }
+
+    #[test]
+    fn duration_text_scales_from_seconds_to_hours() {
+        assert_eq!(duration(0), "0s");
+        assert_eq!(duration(59), "59s");
+        assert_eq!(duration(61), "1m 01s");
+        assert_eq!(duration(252), "4m 12s");
+        assert_eq!(duration(3599), "59m 59s");
+        assert_eq!(duration(3600), "1h 00m");
+        assert_eq!(duration(3780), "1h 03m");
+        // Seconds past the minute are dropped, not rounded up.
+        assert_eq!(duration(3659), "1h 00m");
+        assert_eq!(duration(7199), "1h 59m");
     }
 
     #[test]

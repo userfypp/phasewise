@@ -77,6 +77,19 @@ pub struct PhaseState {
     pub agent_model: Option<String>,
 }
 
+impl PhaseState {
+    /// Seconds from the start of the last attempt to its end, or to `now`
+    /// while it is running; `None` when the phase has not started.
+    pub fn duration_secs(&self, now: Timestamp) -> Option<u64> {
+        let start = self.started_at?;
+        let end = match self.status {
+            PhaseStatus::Running | PhaseStatus::Verifying => now,
+            _ => self.finished_at?,
+        };
+        Some(u64::try_from(end.as_second() - start.as_second()).unwrap_or(0))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub schema_version: u32,
@@ -280,6 +293,15 @@ impl RunState {
     /// What the agents of every phase reported spending so far, in US dollars.
     pub fn cost_usd(&self) -> f64 {
         self.phases.iter().filter_map(|p| p.cost_usd).sum()
+    }
+
+    /// How long the finished phases took, in seconds; `None` when none has.
+    pub fn duration_secs(&self) -> Option<u64> {
+        self.phases
+            .iter()
+            .filter(|p| p.finished_at.is_some())
+            .filter_map(|p| p.duration_secs(Timestamp::now()))
+            .reduce(|a, b| a + b)
     }
 
     /// A new active run with every phase pending.

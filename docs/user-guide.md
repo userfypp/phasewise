@@ -172,7 +172,7 @@ working tree is left as the agent left it, so you can look at what happened.
 ## Reviewing a phase
 
 The run screen lists the phases on the left and shows the selected one on the
-right: its state, attempts, changed files, cost (Claude Code only) and the
+right: its state, attempts, changed files, time taken, cost (Claude Code only) and the
 model the agent used, then three views:
 
 - **Diff**: the changed files with their line counts, then the diff. While a
@@ -289,12 +289,12 @@ terminal UI.
 | `phasewise init` | Creates an example `phasewise.md` (never overwrites). |
 | `phasewise check [PLAN]` | Validates the plan and lists phases and checks. |
 | `phasewise doctor` | Checks git, the agents and the repository. |
-| `phasewise run [PLAN]` | Starts a run and runs phase 1. `--agent`, `--model`, `--effort`, `--auto`. |
-| `phasewise next` | Approves the phase awaiting review and runs the next one. `--auto`, `--model`, `--effort`. |
+| `phasewise run [PLAN]` | Starts a run and runs phase 1. `--agent`, `--model`, `--effort`, `--auto`, `--until`. |
+| `phasewise next` | Approves the phase awaiting review and runs the next one. `--auto`, `--until`, `--model`, `--effort`. |
 | `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
 | `phasewise merge` | Squashes a completed run into the original branch and commits it. `--yes` skips the question. |
-| `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set), the last [usage limits](#usage-limits) Claude Code reported, and a table of phases: state, attempts, files, cost, model. `--json` prints the run as JSON for scripts (`null` when there is no run). |
+| `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set), the time the finished phases took, the last [usage limits](#usage-limits) Claude Code reported, and a table of phases: state, attempts, files, cost, time, model. A running phase shows the time so far; a phase that is retried or rolled back restarts its clock, so the time is that of its last attempt. `--json` prints the run as JSON for scripts (`null` when there is no run). |
 | `phasewise logs [N]` | Prints what happened in phase N (default: the last one that started): result, failure, the agent's summary and the paths of its logs. |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
 | `phasewise review` | Opens the run screen. |
@@ -305,6 +305,9 @@ terminal UI.
 
 `--auto` approves every phase that passes its checks and continues until the
 last phase or the first failure; the last phase still waits for your review.
+`--until N` does the same but stops when phase N is awaiting review (it implies
+`--auto`, and wins if both are given). N must be from the phase about to run to
+the last phase; anything else is an error that says the valid range.
 `--model default` and `--effort default` remove a stored choice.
 
 A phase can run with the other agent when its settings block sets `agent` (see

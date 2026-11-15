@@ -5,7 +5,7 @@ expression: terminal.backend()
 " ✻ phasewise · Demo plan                                     Claude Code · phasewise/20260101-120000"
 "                                                                                                    "
 "   ✓  1  Scaffold the project   │ Add the parser                                                    "
-" ❯ ◆  2  Add the parser         │ Phase 2 · awaiting review · attempt 1 · $0.04 · Sonnet 5.5        "
+" ❯ ◆  2  Add the parser         │ Phase 2 · awaiting review · attempt 1 · 4m 12s · $0.04            "
 "   ·  3  Write the docs         │                                                                   "
 "   ✗  4  Release                │ Diff   Log   Verify                                               "
 "                                │ ──────────────────────────────────────────────────────────────────"

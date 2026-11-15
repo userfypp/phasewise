@@ -12,9 +12,9 @@ use super::data::{DiffView, LogLine, PhaseView};
 use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, confirm_popup, dim, dim_join, draw_too_small,
-    elapsed_since, event_spans, footer_line, input_popup, limit_spans, line_width, margin,
-    notice_line, render_popup, role_style, settings_popup, shortcuts_popup, text_width, truncate,
-    wrap_text,
+    duration_text, elapsed_since, event_spans, footer_line, input_popup, limit_spans, line_width,
+    margin, notice_line, render_popup, role_style, settings_popup, shortcuts_popup, text_width,
+    truncate, wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -180,7 +180,7 @@ fn draw_rule(frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// `Phase 2 · awaiting review · attempt 1 · 2 files · $0.04 · Sonnet 5.5`.
+/// `Phase 2 · awaiting review · attempt 1 · 4m 12s · 2 files · $0.04 · Sonnet 5.5`.
 fn meta_line(app: &App, p: &PhaseView, width: usize) -> Line<'static> {
     let mut parts = vec![format!("Phase {}", p.number)];
     let working = matches!(p.status, PhaseStatus::Running | PhaseStatus::Verifying);
@@ -192,6 +192,9 @@ fn meta_line(app: &App, p: &PhaseView, width: usize) -> Line<'static> {
         parts.push(format!("attempt {}", p.attempts));
     }
     if !working {
+        if let (Some(start), Some(end)) = (p.started_at, p.finished_at) {
+            parts.push(duration_text(end.as_second() - start.as_second()));
+        }
         let files = app.diff.files.len();
         if files > 0 {
             parts.push(format!(
@@ -512,6 +515,7 @@ pub(super) mod tests {
             effort: None,
             cost_usd: None,
             started_at: None,
+            finished_at: None,
             failure_kind: None,
             failure_detail: None,
         };
@@ -528,6 +532,8 @@ pub(super) mod tests {
                 phase(1, "Scaffold the project", PhaseStatus::Done, true),
                 PhaseView {
                     cost_usd: Some(0.04),
+                    started_at: jiff::Timestamp::from_second(1_794_660_000).ok(),
+                    finished_at: jiff::Timestamp::from_second(1_794_660_252).ok(),
                     model: Some("Sonnet 5.5".into()),
                     ..phase(2, "Add the parser", PhaseStatus::AwaitingReview, true)
                 },

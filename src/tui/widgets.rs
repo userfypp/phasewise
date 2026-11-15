@@ -152,14 +152,9 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// `45s`, or `2m 05s` from a minute on.
+/// `45s`, `2m 05s` from a minute on, `1h 03m` from an hour on.
 pub fn duration_text(secs: i64) -> String {
-    let secs = secs.max(0);
-    if secs >= 60 {
-        format!("{}m {:02}s", secs / 60, secs % 60)
-    } else {
-        format!("{secs}s")
-    }
+    crate::display::duration(u64::try_from(secs).unwrap_or(0))
 }
 
 /// Time elapsed since `at`, as `duration_text`.

@@ -209,6 +209,44 @@ fn auto_stops_before_approving_the_last_phase() {
 }
 
 #[test]
+fn until_stops_when_the_phase_is_awaiting_review() {
+    let env = Env::new();
+    env.ok(&["run", "--until", "2"], &[]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+    // The review of phase 2 is approved by `next`, which can stop at the last.
+    env.ok(&["next", "--until", "3"], &[]);
+    assert_eq!(env.statuses(), ["done", "done", "awaiting_review"]);
+    env.check_invariants();
+}
+
+#[test]
+fn until_beats_auto() {
+    let env = Env::new();
+    env.ok(&["run", "--auto", "--until", "1"], &[]);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+}
+
+#[test]
+fn until_out_of_range_is_refused_without_side_effects() {
+    let env = Env::new();
+    for n in ["0", "4"] {
+        let out = env.exec(&["run", "--until", n], &[]);
+        assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+        assert!(out.stderr.contains("from 1"), "{}", out.stderr);
+        assert!(out.stderr.contains("to 3"), "{}", out.stderr);
+    }
+    // No run was started.
+    assert_eq!(env.ok(&["status", "--json"], &[]).stdout.trim(), "null");
+
+    env.ok(&["run", "--until", "2"], &[]);
+    let out = env.exec(&["next", "--until", "2"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("--until 3"), "{}", out.stderr);
+    // The review stays open.
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+}
+
+#[test]
 fn verify_failure_is_retried_in_the_same_session() {
     let env = Env::new();
     env.ok(&["run"], &[("FAKE_MODE", "fix_on_resume")]);
@@ -274,6 +312,18 @@ fn status_json_describes_the_run() {
     assert_eq!(phases[0]["failure"], Value::Null);
     assert_eq!(phases[1]["status"], "pending");
     assert_eq!(phases[1]["cost_usd"], Value::Null);
+    assert!(phases[0]["duration_secs"].is_u64());
+    assert_eq!(phases[1]["duration_secs"], Value::Null);
+    assert!(value["duration_secs"].is_u64());
+}
+
+#[test]
+fn status_shows_the_time_of_the_phases() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let out = env.ok(&["status"], &[]);
+    assert!(out.stdout.contains("TIME"), "{}", out.stdout);
+    assert!(out.stdout.contains("Time:   "), "{}", out.stdout);
 }
 
 #[test]

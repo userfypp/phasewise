@@ -60,6 +60,8 @@ pub struct PhaseView {
     pub cost_usd: Option<f64>,
     /// When the phase started (for the elapsed time of a running one).
     pub started_at: Option<Timestamp>,
+    /// When the phase ended, if it has.
+    pub finished_at: Option<Timestamp>,
     /// Failure in plain words (`Checks failed`) and its full detail.
     pub failure_kind: Option<String>,
     pub failure_detail: Option<String>,
@@ -118,6 +120,7 @@ pub fn load_run_view(run: &Run) -> RunView {
             agent: Some(agent_of(p.number)).filter(|a| *a != state.agent),
             cost_usd: p.cost_usd,
             started_at: p.started_at,
+            finished_at: p.finished_at,
             failure_kind: p
                 .failure
                 .as_ref()

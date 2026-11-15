@@ -112,7 +112,7 @@ pub enum Command {
 
     /// Start a run and launch phase 1; fails if a run is already active
     #[command(
-        after_help = "Examples:\n  phasewise run phasewise.md --auto\n  phasewise run --agent codex"
+        after_help = "Examples:\n  phasewise run phasewise.md --auto\n  phasewise run --until 2\n  phasewise run --agent codex"
     )]
     Run {
         /// Path to the plan file (default: phasewise.md at the repository root)
@@ -123,6 +123,9 @@ pub enum Command {
         /// Chain phases until the plan ends or the first failure
         #[arg(long)]
         auto: bool,
+        /// Like --auto, but stop when phase N is awaiting review
+        #[arg(long, value_name = "N")]
+        until: Option<usize>,
         #[command(flatten)]
         settings: SettingsArgs,
     },
@@ -152,11 +155,16 @@ pub enum Command {
     },
 
     /// Approve the phase awaiting review and launch the next one
-    #[command(after_help = "Examples:\n  phasewise next\n  phasewise next --auto")]
+    #[command(
+        after_help = "Examples:\n  phasewise next\n  phasewise next --auto\n  phasewise next --until 4"
+    )]
     Next {
         /// Chain phases until the plan ends or the first failure
         #[arg(long)]
         auto: bool,
+        /// Like --auto, but stop when phase N is awaiting review
+        #[arg(long, value_name = "N")]
+        until: Option<usize>,
         #[command(flatten)]
         settings: SettingsArgs,
     },
@@ -318,8 +326,9 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             plan,
             agent,
             auto,
+            until,
             settings,
-        }) => run_command(plan, agent, auto, &settings),
+        }) => run_command(plan, agent, ops::Chain::from_flags(auto, until), &settings),
         Some(Command::Plan {
             goal,
             agent,
@@ -328,7 +337,11 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             output,
             force,
         }) => plan_command(goal, agent, model, effort, output, force),
-        Some(Command::Next { auto, settings }) => next_command(auto, &settings),
+        Some(Command::Next {
+            auto,
+            until,
+            settings,
+        }) => next_command(ops::Chain::from_flags(auto, until), &settings),
         Some(Command::Retry { note, settings }) => retry_command(note, &settings),
         Some(Command::Models { agent }) => models_command(agent),
         Some(Command::Completions { shell }) => completions(shell),
@@ -616,11 +629,15 @@ fn current_dir() -> Result<PathBuf> {
 fn run_command(
     plan: Option<PathBuf>,
     agent: Option<AgentArg>,
-    auto: bool,
+    chain: ops::Chain,
     settings: &SettingsArgs,
 ) -> Result<ExitCode> {
     let overrides = settings.overrides()?;
     let path = resolve_plan_path(plan)?;
+    // Before the run exists, so a bad `--until` creates nothing.
+    if let ops::Chain::Until(stop) = chain {
+        ops::check_until(stop, 1, crate::plan::load(&path)?.phases.len())?;
+    }
     let run = ops::start(
         &current_dir()?,
         &path,
@@ -635,7 +652,7 @@ fn run_command(
         run.state.agent
     );
     drive(run, move |run, events, cancel| {
-        ops::execute(run, auto, events, cancel).map(NextOutcome::Ran)
+        ops::execute(run, chain, events, cancel).map(NextOutcome::Ran)
     })
 }
 
@@ -804,11 +821,11 @@ pub(crate) fn shell_arg(path: &Path) -> String {
     }
 }
 
-fn next_command(auto: bool, settings: &SettingsArgs) -> Result<ExitCode> {
+fn next_command(chain: ops::Chain, settings: &SettingsArgs) -> Result<ExitCode> {
     let overrides = settings.overrides()?;
     let run = load_run()?;
     drive(run, move |run, events, cancel| {
-        ops::next(run, auto, &overrides, events, cancel)
+        ops::next(run, chain, &overrides, events, cancel)
     })
 }
 
@@ -1103,6 +1120,7 @@ fn completions(shell: clap_complete::Shell) -> Result<ExitCode> {
 /// The run as JSON: the stable shape scripts can rely on.
 fn status_json(run: &Run) -> Result<String> {
     let state = &run.state;
+    let now = jiff::Timestamp::now();
     let phases: Vec<serde_json::Value> = state
         .phases
         .iter()
@@ -1113,6 +1131,7 @@ fn status_json(run: &Run) -> Result<String> {
                 "status": p.status,
                 "attempts": p.attempts,
                 "cost_usd": p.cost_usd,
+                "duration_secs": p.duration_secs(now),
                 "agent": engine::phase_agent(state, &run.plan, p.number).to_string(),
                 "model": p.agent_model.as_ref().or(p.model.as_ref()),
                 "effort": p.effort,
@@ -1135,6 +1154,7 @@ fn status_json(run: &Run) -> Result<String> {
         "original_branch": state.original_branch,
         "run_branch": state.run_branch,
         "cost_usd": any_cost.then(|| state.cost_usd()),
+        "duration_secs": state.duration_secs(),
         "max_cost_usd": limit,
         "limits": limits.as_ref().map(|l| l
             .windows
@@ -1210,6 +1230,9 @@ fn status(json: bool) -> Result<ExitCode> {
             None => outln!("Cost:   {spent}"),
         }
     }
+    if let Some(secs) = state.duration_secs() {
+        outln!("Time:   {}", crate::display::duration(secs));
+    }
     if let Some(limits) = run_limits(&run) {
         let (now, tz) = crate::display::limits_clock();
         let parts: Vec<String> = crate::display::limit_parts(&limits, now, &tz)
@@ -1226,7 +1249,8 @@ fn status(json: bool) -> Result<ExitCode> {
     }
     outln!();
 
-    let rows: Vec<[String; 6]> = state
+    let now = jiff::Timestamp::now();
+    let rows: Vec<[String; 7]> = state
         .phases
         .iter()
         .map(|p| {
@@ -1246,6 +1270,8 @@ fn status(json: bool) -> Result<ExitCode> {
                 p.attempts.to_string(),
                 files,
                 cost,
+                p.duration_secs(now)
+                    .map_or_else(|| "-".to_string(), crate::display::duration),
                 p.agent_model.as_ref().or(p.model.as_ref()).map_or_else(
                     || "-".to_string(),
                     |m| model_name(engine::phase_agent(state, &run.plan, p.number), m),
@@ -1253,7 +1279,7 @@ fn status(json: bool) -> Result<ExitCode> {
             ]
         })
         .collect();
-    let headers = ["#", "STATUS", "TRIES", "FILES", "COST", "MODEL"];
+    let headers = ["#", "STATUS", "TRIES", "FILES", "COST", "TIME", "MODEL"];
     let mut widths = headers.map(str::len);
     for row in &rows {
         for (width, cell) in widths.iter_mut().zip(row) {
@@ -1262,7 +1288,7 @@ fn status(json: bool) -> Result<ExitCode> {
     }
     let st = Styler::for_stdout();
     // Cells are padded before colouring so the ANSI codes do not affect widths.
-    let line = |cells: [&str; 6], title: &str, status_role: Option<Role>| {
+    let line = |cells: [&str; 7], title: &str, status_role: Option<Role>| {
         let mut out = String::new();
         for (i, (cell, width)) in cells.iter().zip(widths).enumerate() {
             let padded = format!("{cell:<width$}");
@@ -1282,7 +1308,9 @@ fn status(json: bool) -> Result<ExitCode> {
     line(headers, "TITLE", None);
     for (row, phase) in rows.iter().zip(&state.phases) {
         line(
-            [&row[0], &row[1], &row[2], &row[3], &row[4], &row[5]],
+            [
+                &row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6],
+            ],
             &phase.title,
             Some(status_role(phase.status)),
         );

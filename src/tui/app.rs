@@ -543,6 +543,7 @@ mod tests {
             effort: None,
             cost_usd: None,
             started_at: None,
+            finished_at: None,
             failure_kind: None,
             failure_detail: None,
         }

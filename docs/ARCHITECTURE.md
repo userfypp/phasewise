@@ -129,7 +129,8 @@ phases.
 ### Reviewing and finishing
 
 `ops::next` approves the phase awaiting review (it becomes `done`) and runs the
-next pending one. With `--auto` it keeps going until a phase fails; the last
+next pending one. With `--auto` it keeps going until a phase fails (`ops::Chain::All`); with
+`--until N` (`Chain::Until`) it stops when phase N awaits review. The last
 phase always waits for review. When the last phase is approved, the run is
 `completed`. Integrating it is left to the user, who is told `phasewise merge`
 and the equivalent commands.
