@@ -349,7 +349,8 @@ Environment variables:
 
 ## Keys
 
-**Home screen**: `enter` start or open the run · `c` commit the plan · `p` new
+**Home screen**: `enter` start or open the run · `c` commit the plan (on the
+branch of a finished run it goes back to your original branch first) · `p` new
 plan · `a` agent · `m` model · `e` effort · `o` last run · `?` all keys · `q`
 quit. While a plan is being written: `esc` stops it.
 

@@ -317,7 +317,9 @@ impl<'a> HomeTui<'a> {
         let cwd: PathBuf = self.cwd.to_path_buf();
         let path = self.home.data.plan_path.clone();
         self.commit = Some(thread::spawn(move || {
-            let result = ops::commit_plan(&cwd, &path).map_err(|err| format!("{err:#}"));
+            let result = ops::leave_finished_run(&cwd)
+                .and_then(|()| ops::commit_plan(&cwd, &path))
+                .map_err(|err| format!("{err:#}"));
             let _ = tx.send(Background::Committed(result));
         }));
         self.then_start = then_start;

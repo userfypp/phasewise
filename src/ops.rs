@@ -366,6 +366,27 @@ fn refuse_run_branch(git: &Git, branch: &str, action: &str) -> Result<()> {
     )
 }
 
+/// When the repository is on the branch of a run that is over (completed or
+/// aborted), switches back to the run's original branch. Does nothing in any
+/// other case. The run branch is kept.
+pub fn leave_finished_run(cwd: &Path) -> Result<()> {
+    let git = Git::discover(cwd)?;
+    let Some(run) = load_from_git(&git)? else {
+        return Ok(());
+    };
+    if run.state.status == RunStatus::Active
+        || git.current_branch()?.as_deref() != Some(run.state.run_branch.as_str())
+    {
+        return Ok(());
+    }
+    git.switch(&run.state.original_branch).with_context(|| {
+        format!(
+            "Cannot go back to {} (the run's original branch). Run `git switch {}` yourself",
+            run.state.original_branch, run.state.original_branch
+        )
+    })
+}
+
 /// The latest run, whatever its status, with crash recovery applied.
 pub fn load_current(cwd: &Path) -> Result<Option<Run>> {
     let git = Git::discover(cwd)?;

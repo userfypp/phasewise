@@ -444,6 +444,32 @@ fn completed_env() -> Env {
 }
 
 #[test]
+fn leaving_a_finished_run_goes_back_to_the_original_branch_and_keeps_the_run_branch() {
+    let env = completed_env();
+    let run_branch = env.repo.git_trim(&["branch", "--show-current"]);
+    assert!(run_branch.starts_with("phasewise/"), "{run_branch}");
+    phasewise::ops::leave_finished_run(env.repo.path()).expect("leave");
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), "main");
+    assert!(
+        env.repo
+            .git(&["branch", "--list", &run_branch])
+            .contains(&run_branch)
+    );
+    // Off the run branch it does nothing.
+    phasewise::ops::leave_finished_run(env.repo.path()).expect("noop");
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), "main");
+}
+
+#[test]
+fn leaving_an_active_run_does_not_switch_branches() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let run_branch = env.repo.git_trim(&["branch", "--show-current"]);
+    phasewise::ops::leave_finished_run(env.repo.path()).expect("noop");
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), run_branch);
+}
+
+#[test]
 fn merge_commits_the_squashed_run_on_the_original_branch_and_keeps_the_run_branch() {
     let env = completed_env();
     let run_id = env.run_id();

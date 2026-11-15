@@ -203,6 +203,16 @@ impl Home {
             .map_or("<your main branch>", |run| run.original_branch.as_str())
     }
 
+    /// On the branch of the current run, and that run is over.
+    fn on_finished_run_branch(&self) -> bool {
+        self.run_branch_id().is_some()
+            && self
+                .data
+                .run
+                .as_ref()
+                .is_some_and(|run| run.run_branch == self.data.branch && !run.active())
+    }
+
     /// Refuses a command that must not run on the branch of a run.
     fn refuse_on_run_branch(&mut self) -> Option<HomeCommand> {
         let why = format!(
@@ -560,6 +570,9 @@ impl Home {
                 self.mode = Mode::GoalInput(String::new());
                 None
             }
+            // Committing the plan from the branch of a finished run first goes back
+            // to the run's original branch (see `ops::leave_finished_run`).
+            KeyCode::Char('c') if self.on_finished_run_branch() => self.commit(),
             KeyCode::Char('c') | KeyCode::Enter if self.run_branch_id().is_some() => {
                 self.refuse_on_run_branch()
             }
@@ -799,12 +812,15 @@ impl Home {
         let mut keys = Vec::new();
         match &self.data.plan {
             PlanState::Valid(_) => {
-                // Neither starting nor committing works on the branch of a run.
+                // Starting does not work on the branch of a run; committing does
+                // once the run is over (it goes back to the original branch).
                 if self.run_branch_id().is_none() {
                     keys.push(item("enter", "start"));
-                    if self.data.plan_uncommitted {
-                        keys.push(item("c", "commit"));
-                    }
+                }
+                if self.data.plan_uncommitted
+                    && (self.run_branch_id().is_none() || self.on_finished_run_branch())
+                {
+                    keys.push(item("c", "commit"));
                 }
                 keys.extend([item("p", "new plan"), model, agent, effort]);
             }
@@ -1631,13 +1647,19 @@ mod tests {
         assert_eq!(h.handle_key(code(KeyCode::Enter)), None);
         assert_eq!(text(&h), Some(expected));
         h.message = None;
-        assert_eq!(h.handle_key(key('c')), None);
-        assert_eq!(text(&h), Some(expected));
-        assert_eq!(h.mode, Mode::Normal);
+        // The run is over: `c` commits (after going back to the original branch).
         let keys: Vec<_> = h.footer().into_iter().map(|(key, _)| key).collect();
         assert!(!keys.contains(&"enter".to_string()), "{keys:?}");
+        assert!(keys.contains(&"c".to_string()), "{keys:?}");
+        assert_eq!(h.handle_key(key('c')), Some(HomeCommand::Commit));
+        // An active run still refuses both.
+        h.data.run = Some(run_summary(RunStatus::Active));
+        assert_eq!(h.handle_key(key('c')), None);
+        assert_eq!(text(&h), Some(RUN_ACTIVE));
+        let keys: Vec<_> = h.footer().into_iter().map(|(key, _)| key).collect();
         assert!(!keys.contains(&"c".to_string()), "{keys:?}");
         h.data.branch = "main".into();
+        h.data.run = Some(run_summary(RunStatus::Aborted));
         assert!(h.handle_key(code(KeyCode::Enter)).is_none());
         assert_eq!(h.mode, Mode::ConfirmCommitStart(0));
     }
