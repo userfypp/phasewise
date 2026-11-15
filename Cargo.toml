@@ -1,6 +1,6 @@
 [package]
 name = "phasewise"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Run big plans with Claude Code or Codex one phase at a time — verified, checkpointed, and reviewable."
