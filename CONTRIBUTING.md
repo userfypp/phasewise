@@ -113,6 +113,8 @@ in light and dark mode.
   changelog entry. A check fails when the title does not follow the format.
   Do not edit `CHANGELOG.md` or the version in `Cargo.toml`; see
   [Releasing](docs/RELEASING.md).
+- If you want credit, add yourself to [CONTRIBUTORS.md](CONTRIBUTORS.md) in the
+  same pull request. It is optional.
 - Add or update tests for every change in behaviour.
 - Update the documentation the change affects: the
   [user guide](docs/user-guide.md) for anything a user sees, the

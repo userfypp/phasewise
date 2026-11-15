@@ -87,6 +87,6 @@ Every step is also a command: `phasewise plan "…"`, `phasewise run`, `phasewis
 - [Architecture](docs/ARCHITECTURE.md): modules, data flow, files on disk and invariants.
 - [Roadmap](docs/ROADMAP.md): what may come.
 - [Releasing](docs/RELEASING.md): how versions and releases are made.
-- [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), [Code of conduct](CODE_OF_CONDUCT.md) and [Changelog](CHANGELOG.md).
+- [Contributing](CONTRIBUTING.md), [Contributors](CONTRIBUTORS.md), [Security](SECURITY.md), [Code of conduct](CODE_OF_CONDUCT.md) and [Changelog](CHANGELOG.md).
 
 <p align="center"><sub>MIT licensed · © userfypp</sub></p>

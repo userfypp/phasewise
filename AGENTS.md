@@ -58,7 +58,7 @@ cargo test --all-features
    then `rename`).
 7. Every user-facing error says what happened and what to do. No panics as UI.
 8. Agent output parsers ignore unknown event types and fields; they never fail.
-9. Do not widen the scope: new ideas go to `docs/ROADMAP.md`.
+9. Do not widen the scope: new ideas become issues, listed in `docs/ROADMAP.md`.
 10. Tests never call a real agent, never use the network and never depend on
     the global git configuration.
 11. The repository is in English: code, comments, docs, commit messages
