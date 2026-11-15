@@ -322,6 +322,11 @@ mod tests {
         assert!(registered(pgid));
         assert!(group_exists(pgid));
         drop(child);
+        // The killed processes may linger as zombies until init reaps them.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while group_exists(pgid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert!(!group_exists(pgid));
         assert!(!registered(pgid));
     }
