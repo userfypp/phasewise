@@ -892,10 +892,16 @@ fn rollback_command(k: usize, yes: bool) -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    // Counted before the rollback: phases that were already pending are not reset.
+    let later = run
+        .state
+        .phases
+        .iter()
+        .filter(|p| p.number > k && p.status != PhaseStatus::Pending)
+        .count();
     ops::rollback(&mut run, k, Some(&sha))?;
     announce_recovery(&run);
     outln!("Rolled back to {target} ({}).", short_sha(&sha));
-    let later = run.state.phases.iter().filter(|p| p.number > k).count();
     if later > 0 {
         outln!("{later} later phase(s) are pending again.");
     }
