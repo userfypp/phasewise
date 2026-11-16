@@ -119,6 +119,32 @@ fn init_works_in_repo_without_commits() {
     assert!(repo.path().join("phasewise.md").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_plan_path_that_is_a_directory() {
+    let repo = TestRepo::new();
+    std::fs::create_dir(repo.path().join("phasewise.md")).unwrap();
+    repo.phasewise()
+        .arg("init")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("phasewise.md is a directory"))
+        .stdout(predicate::str::contains("left untouched").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_dangling_plan_symlink() {
+    let repo = TestRepo::new();
+    std::os::unix::fs::symlink("nowhere", repo.path().join("phasewise.md")).unwrap();
+    repo.phasewise()
+        .arg("init")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("points nowhere"));
+    assert!(!repo.path().join("nowhere").exists());
+}
+
 #[test]
 fn init_outside_repo_exits_1() {
     let dir = tempfile::tempdir().expect("temp dir");
