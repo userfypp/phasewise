@@ -348,17 +348,16 @@ pub fn run_phase(
             );
             return ctx.fail(phase, FailureKind::VerifyFailed, detail);
         }
-        if let Some(limit) = ctx.settings.max_cost_usd {
-            let spent = ctx.state.cost_usd();
-            if spent >= limit {
-                let detail = format!(
-                    "`{}` failed ({what}). Not retrying: the run has spent ${spent:.2} of its \
-${limit:.2} limit. Output: {}",
-                    failed.command,
-                    ctx.paths.verify_log(phase).display()
-                );
-                return ctx.fail(phase, FailureKind::VerifyFailed, detail);
-            }
+        if let Some(limit) = ctx.settings.max_cost_usd
+            && let Some((spent, limit)) = cost_limit_reached(ctx.state.cost_usd(), limit)
+        {
+            let detail = format!(
+                "`{}` failed ({what}). Not retrying: the run has spent ${spent} of its \
+${limit} limit. Output: {}",
+                failed.command,
+                ctx.paths.verify_log(phase).display()
+            );
+            return ctx.fail(phase, FailureKind::VerifyFailed, detail);
         }
         retries_used += 1;
         ctx.emit(EngineEvent::Retrying {
@@ -787,8 +786,47 @@ The phase's changes are still in the working tree. Fix the cause, then run \
     Ok(PhaseStatus::AwaitingReview)
 }
 
+/// Whether `spent` has reached `limit` (both in US dollars), compared in whole
+/// micro-dollars so float sums such as 0.1 + 0.2 against 0.30 do not slip by a
+/// step. Returns the two amounts to print, with more decimals only when two
+/// decimals would show them as equal while the comparison says otherwise.
+pub fn cost_limit_reached(spent: f64, limit: f64) -> Option<(String, String)> {
+    let micros = |usd: f64| (usd * 1_000_000.0).round() as i64;
+    if micros(spent) < micros(limit) {
+        return None;
+    }
+    let (spent_2, limit_2) = (format!("{spent:.2}"), format!("{limit:.2}"));
+    if spent_2 == limit_2 && micros(spent) != micros(limit) {
+        return Some((format!("{spent:.6}"), format!("{limit:.6}")));
+    }
+    Some((spent_2, limit_2))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_cost_limit_is_compared_in_micro_dollars() {
+        let same = |a: &str| Some((a.to_string(), a.to_string()));
+        // Under the limit by a micro-dollar: still allowed.
+        assert_eq!(cost_limit_reached(0.999_999, 1.0), None);
+        // Sums of cents that land one float step off the limit count as equal.
+        assert_eq!(cost_limit_reached(0.1 + 0.2, 0.30), same("0.30"));
+        assert_eq!(cost_limit_reached(0.7 + 0.1 + 0.1, 0.90), same("0.90"));
+        // Exact equality reaches the limit.
+        assert_eq!(cost_limit_reached(1.0, 1.0), same("1.00"));
+        // Normal values keep the two-decimal output.
+        assert_eq!(cost_limit_reached(0.5, 1.0), None);
+        assert_eq!(
+            cost_limit_reached(1.5, 1.0),
+            Some(("1.50".to_string(), "1.00".to_string()))
+        );
+        // Over the limit but equal at two decimals: show the precision.
+        assert_eq!(
+            cost_limit_reached(1.000_004, 1.0),
+            Some(("1.000004".to_string(), "1.000000".to_string()))
+        );
+    }
+
     use super::*;
     use crate::plan::{self, AgentKind};
 
