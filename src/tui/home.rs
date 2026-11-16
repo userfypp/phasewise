@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::data::{HomeData, PlanState, RunSummary};
 use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
-    confirm_key, digit_row, edit_text, item, picker_footer,
+    confirm_key, digit_row, edit_text, help_key, help_scroll_max, item, picker_footer,
 };
 use crate::agent::{LaunchOptions, ModelInfo};
 use crate::display::{EventLine, money, phase_count};
@@ -142,6 +142,8 @@ pub struct Home {
     claude_models: ModelsState,
     codex_models: ModelsState,
     pub mode: Mode,
+    /// First line of the `?` popup shown when it does not fit the screen.
+    pub help_scroll: usize,
     pub message: Option<Notice>,
     /// The user settings (what the screen shows depends on them).
     pub settings: Settings,
@@ -189,6 +191,7 @@ impl Home {
             claude_models: ModelsState::NotLoaded,
             codex_models: ModelsState::NotLoaded,
             mode: Mode::Normal,
+            help_scroll: 0,
             message: None,
             planning: None,
             planning_started: None,
@@ -444,8 +447,11 @@ impl Home {
         match self.mode.clone() {
             Mode::Normal => self.key_normal(key),
             Mode::Help => {
-                // Any key closes the help; `?` is the one that opened it.
-                self.mode = Mode::Normal;
+                // Scrolling keys move the popup; any other key closes it.
+                let max = help_scroll_max(&Home::shortcuts());
+                if help_key(&mut self.help_scroll, max, key) {
+                    self.mode = Mode::Normal;
+                }
                 None
             }
             Mode::ConfirmQuit(row) => self.confirm(key, row, Mode::ConfirmQuit, HomeCommand::Quit),
@@ -559,6 +565,7 @@ impl Home {
             KeyCode::Char('q') => self.quit(),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                self.help_scroll = 0;
                 None
             }
             KeyCode::Char('s') => {
@@ -846,7 +853,7 @@ impl Home {
             Mode::GoalInput(_) => {
                 return vec![item("enter", "write the plan"), item("esc", "cancel")];
             }
-            Mode::Help => return vec![item("any key", "close")],
+            Mode::Help => return vec![item("j/k", "scroll")],
             Mode::Error(_) => return vec![item("enter", "close")],
             Mode::Normal => {}
         }

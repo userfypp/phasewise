@@ -484,7 +484,7 @@ fn draw_popup(frame: &mut Frame, home: &Home, area: Rect) {
     let agent = agent_title(home.agent);
     let popup = match &home.mode {
         Mode::Normal => return,
-        Mode::Help => shortcuts_popup(&Home::shortcuts()),
+        Mode::Help => shortcuts_popup(&Home::shortcuts()).scroll(home.help_scroll),
         Mode::Settings(panel) => settings_popup(panel, area.width),
         Mode::ConfirmQuit(row) => confirm_popup(
             "Quit phasewise?",

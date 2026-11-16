@@ -419,7 +419,11 @@ plan · `a` agent · `m` model · `e` effort · `o` last run · `s` settings · 
 all keys · `q` quit. While a plan is being written: `esc` stops it.
 
 **Run screen**: `j`/`k` or arrows select a phase · `tab` next view ·
-`PgUp`/`PgDn` scroll · `n` approve · `r` retry · `b` roll back · `m` merge a
+`PgUp`/`PgDn` scroll the right panel by a page, `J`/`K` by a line, `h`/`l` or
+the left and right arrows by 8 columns, `g`/`G` or `Home`/`End` jump to its top
+or bottom (`G` on the log of a running phase follows it again), `/` searches it
+(case-insensitive; an empty search clears it) and `]`/`[` go to the next and
+previous match · `n` approve · `r` retry · `b` roll back · `m` merge a
 completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
 all keys · `q` quit.
 
