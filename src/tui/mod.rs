@@ -1151,14 +1151,14 @@ impl Tui<'_> {
         self.app.set_caches(diff, log, verify);
         if follow {
             // The view clamps the scroll to the end of the content.
-            self.app.scroll = u16::MAX;
+            self.app.scroll = usize::MAX;
         }
     }
 }
 
 /// True when the view shows the end of a log of `len` lines (so it follows it).
-fn at_log_end(scroll: u16, len: usize, page: u16) -> bool {
-    usize::from(scroll) >= len.saturating_sub(usize::from(page))
+fn at_log_end(scroll: usize, len: usize, page: u16) -> bool {
+    scroll >= len.saturating_sub(usize::from(page))
 }
 
 /// The message shown when the run was abandoned.
