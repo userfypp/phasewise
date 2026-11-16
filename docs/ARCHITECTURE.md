@@ -230,8 +230,9 @@ These hold everywhere. A change that breaks one is a design change.
 - **The only file written outside `.phasewise/` is the user settings file**
   (`settings.toml`, see `settings.rs`), and only when the user changes a
   setting. Changes are read-modify-write under a lock file next to it
-  (`settings.toml.lock`, same PID-based lock as a run's, so a dead owner's lock
-  is taken over; reading never creates it). It is written atomically; a file that is not valid TOML is never
+  (`settings.toml.lock`, created exclusively and removed afterwards; a lock
+  older than ten seconds is the leftover of a crash and is removed; reading
+  never creates it). It is written atomically; a file that is not valid TOML is never
   overwritten without keeping a copy as `settings.toml.bak`. Settings only
   fill in what environment variables, command-line flags and the plan leave
   open. The TUI keeps the settings in force in its loop and copies them to

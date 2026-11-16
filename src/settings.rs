@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 
 use crate::plan::{self, AgentKind};
-use crate::state::{LockFailure, LockGuard, write_atomic};
+use crate::state::write_atomic;
 
 /// How long an update waits for another one to finish.
 const LOCK_WAIT: Duration = Duration::from_secs(10);
@@ -420,38 +420,83 @@ pub fn save_to(path: &Path, settings: &Settings) -> Result<Option<PathBuf>> {
     Ok(backup)
 }
 
+/// An update that has held the lock this long has crashed (an update takes
+/// milliseconds), so a waiting one removes the lock.
+const STALE_AFTER: Duration = Duration::from_secs(10);
+
+/// The lock file of `settings.toml`: created exclusively, removed when dropped.
+struct SettingsLock {
+    path: PathBuf,
+}
+
+impl SettingsLock {
+    /// Waits for the lock for up to `LOCK_WAIT`. Unlike a run's lock it has no
+    /// owner check: it only exists while a settings update runs, and a lock
+    /// older than `STALE_AFTER` is the leftover of a crash.
+    fn acquire(path: &Path) -> Result<SettingsLock> {
+        use std::io::Write;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Cannot create {}", parent.display()))?;
+        }
+        let deadline = Instant::now() + LOCK_WAIT;
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(mut file) => {
+                    // The PID only helps whoever reads the file; it is not checked.
+                    let _ = writeln!(file, "{}", std::process::id());
+                    return Ok(SettingsLock {
+                        path: path.to_path_buf(),
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let age = std::fs::metadata(path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok());
+                    if age.is_some_and(|age| age > STALE_AFTER) {
+                        let _ = std::fs::remove_file(path);
+                        continue;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(anyhow!(
+                            "The settings are being changed by another phasewise process \
+(lock file: {}). Try again; if no phasewise process is running, delete the lock file.",
+                            path.display()
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    return Err(anyhow!(e))
+                        .with_context(|| format!("Cannot create {}", path.display()));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for SettingsLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Reads the settings, applies `change` and saves them, all under a lock file
 /// (`settings.toml.lock`, next to the settings) so that concurrent updates do
-/// not lose each other's changes. The lock names its owner's PID and a dead
-/// owner's lock is taken over, so a crash never blocks later updates.
-/// `change` gets the loaded settings and their warnings and returns whether to
-/// save them. Returns the backup path, if one was made.
+/// not lose each other's changes. A lock left by a crash is removed once it is
+/// older than ten seconds. `change` gets the loaded settings and their
+/// warnings and returns whether to save them. Returns the backup path, if one
+/// was made.
 pub fn update_at<F>(path: &Path, change: F) -> Result<Option<PathBuf>>
 where
     F: FnOnce(&mut Settings, &[String]) -> Result<bool>,
 {
-    let lock_path = path.with_file_name(format!("{FILE_NAME}.lock"));
-    let deadline = Instant::now() + LOCK_WAIT;
-    let _guard = loop {
-        match LockGuard::acquire_file(&lock_path) {
-            Ok(guard) => break guard,
-            Err(LockFailure::Busy(_)) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(LockFailure::Busy(pid)) => {
-                let holder = pid.map_or_else(
-                    || "another phasewise process".to_string(),
-                    |pid| format!("phasewise process {pid}"),
-                );
-                return Err(anyhow!(
-                    "The settings are being changed by {holder} (lock file: {}). Try again; \
-if no phasewise process is running, delete the lock file.",
-                    lock_path.display()
-                ));
-            }
-            Err(LockFailure::Other(e)) => return Err(e),
-        }
-    };
+    let _lock = SettingsLock::acquire(&path.with_file_name(format!("{FILE_NAME}.lock")))?;
     let loaded = load_from(path);
     let mut settings = loaded.settings;
     if change(&mut settings, &loaded.warnings)? {
@@ -640,13 +685,20 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_left_by_a_dead_process_does_not_block_and_reading_makes_no_lock() {
+    fn a_lock_left_by_a_crash_does_not_block_and_reading_makes_no_lock() {
         let dir = temp();
         let path = dir.path().join(FILE_NAME);
         let lock = dir.path().join("settings.toml.lock");
         load_from(&path);
         assert!(!lock.exists());
         std::fs::write(&lock, "4000000000\n").expect("lock");
+        let old = std::time::SystemTime::now() - Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .expect("open lock")
+            .set_modified(old)
+            .expect("age the lock");
         update_at(&path, |s, _| {
             s.set("bell", "on").map_err(|e| anyhow!(e))?;
             Ok(true)
@@ -654,6 +706,28 @@ mod tests {
         .expect("updated");
         assert_eq!(load_from(&path).settings.get("bell"), "on");
         assert!(!lock.exists());
+    }
+
+    #[test]
+    fn a_fresh_lock_blocks_until_it_is_released() {
+        let dir = temp();
+        let path = dir.path().join(FILE_NAME);
+        let lock = dir.path().join("settings.toml.lock");
+        std::fs::write(&lock, "1\n").expect("lock");
+        let release = lock.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            std::fs::remove_file(release).expect("release");
+        });
+        let started = Instant::now();
+        update_at(&path, |s, _| {
+            s.set("bell", "on").map_err(|e| anyhow!(e))?;
+            Ok(true)
+        })
+        .expect("updated");
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        handle.join().expect("join");
+        assert_eq!(load_from(&path).settings.get("bell"), "on");
     }
 
     #[test]
