@@ -11,10 +11,10 @@ use super::app::{App, Mode, Tab};
 use super::data::{DiffView, LogLine, PhaseView};
 use super::shared::spinner;
 use super::widgets::{
-    MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, confirm_popup, dim, dim_join, draw_too_small,
-    duration_text, elapsed_since, event_spans, footer_line, input_popup, limit_spans, line_width,
-    margin, notice_line, render_popup, role_style, settings_popup, shortcuts_popup, text_width,
-    truncate, wrap_text,
+    MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, char_width, confirm_popup, dim, dim_join,
+    draw_too_small, duration_text, elapsed_since, event_spans, footer_line, input_popup,
+    limit_spans, line_width, margin, notice_line, render_popup, role_style, settings_popup,
+    shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -273,11 +273,7 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     // The tab bar and the rule follow the head.
     let used = u16::try_from(head.len() + 2).unwrap_or(u16::MAX);
     let content_height = area.height.saturating_sub(used);
-    let lines = match app.tab {
-        Tab::Diff => diff_lines(&app.diff),
-        Tab::Log => app.log.iter().map(log_line).collect(),
-        Tab::Verify => verify_lines(&app.verify),
-    };
+    let lines = panel_lines(app);
     app.page = content_height.max(1);
     let total = lines.len();
     let max_scroll = total.saturating_sub(usize::from(content_height));
@@ -297,12 +293,50 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(head), top);
     // `Paragraph::scroll` takes a `u16`, which stops at 65,535 lines: cut the
     // visible window out of the lines instead.
+    let widest = lines.iter().map(line_width).max().unwrap_or(0);
+    app.hscroll = app.hscroll.min(widest.saturating_sub(width));
     let visible: Vec<Line> = lines
         .into_iter()
         .skip(app.scroll)
         .take(usize::from(content_height))
+        .map(|line| cut_columns(line, app.hscroll))
         .collect();
     frame.render_widget(Paragraph::new(visible), content);
+}
+
+/// The lines of the current tab's panel, as drawn (and as searched).
+pub(super) fn panel_lines(app: &App) -> Vec<Line<'static>> {
+    match app.tab {
+        Tab::Diff => diff_lines(&app.diff),
+        Tab::Log => app.log.iter().map(log_line).collect(),
+        Tab::Verify => verify_lines(&app.verify),
+    }
+}
+
+/// `line` without its first `skip` columns. A wide character cut in half
+/// leaves a space for the column that remains.
+fn cut_columns(line: Line<'static>, skip: usize) -> Line<'static> {
+    if skip == 0 {
+        return line;
+    }
+    let mut col = 0;
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let mut kept = String::new();
+        for c in span.content.chars() {
+            let w = char_width(c);
+            if col >= skip {
+                kept.push(c);
+            } else if col + w > skip {
+                kept.push_str(&" ".repeat(col + w - skip));
+            }
+            col += w;
+        }
+        if !kept.is_empty() {
+            spans.push(Span::styled(kept, span.style));
+        }
+    }
+    Line { spans, ..line }
 }
 
 /// Text for the content pane. The terminal buffer cannot hold control
@@ -506,6 +540,12 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Mode::Help => shortcuts_popup(&App::shortcuts()),
         Mode::Settings(panel) => settings_popup(panel, area.width),
+        Mode::Search(buffer) => input_popup(
+            "Search",
+            "Case-insensitive; ] and [ go to the next and previous match.",
+            buffer,
+            area.width,
+        ),
         Mode::Note(buffer) => input_popup(
             &format!("Retry phase {}", retry_target(app)),
             "Optional note for the agent, added to the prompt.",
@@ -880,5 +920,71 @@ pub(super) mod tests {
         let mut long = app.clone();
         long.view.phases[0].title = "x".repeat(200);
         assert_eq!(list_width(&long, 98), 39);
+    }
+
+    fn row_of(terminal: &Terminal<TestBackend>, needle: &str) -> Option<String> {
+        format!("{}", terminal.backend())
+            .lines()
+            .find(|l| l.contains(needle))
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn horizontal_scroll_cuts_columns_and_stops_at_the_widest_line() {
+        let mut app = app();
+        app.diff = DiffView {
+            text: format!("+{}END", "a".repeat(150)),
+            ..DiffView::default()
+        };
+        let before = render(&mut app, 100, 30);
+        assert!(row_of(&before, "+aaaa").is_some());
+        assert!(row_of(&before, "END").is_none());
+        app.hscroll = 8;
+        let row = row_of(&render(&mut app, 100, 30), "aaaa").expect("row");
+        assert!(!row.contains('+'), "{row}");
+        app.hscroll = 10_000;
+        let row = row_of(&render(&mut app, 100, 30), "END").expect("the end of the line");
+        assert!(row.contains("aaaEND") || row.contains("END"), "{row}");
+        // 151 columns + `+` + `END` = 154 wide in a pane of 66.
+        assert_eq!(app.hscroll, 154 - 66, "clamped to the widest line");
+    }
+
+    #[test]
+    fn horizontal_scroll_keeps_wide_characters_whole() {
+        let mut app = app();
+        app.diff = DiffView {
+            text: format!(" {}", "漢字".repeat(40)),
+            ..DiffView::default()
+        };
+        // Columns: ` ` 0, `漢` 1-2, `字` 3-4: skipping 3 starts at `字`.
+        app.hscroll = 3;
+        let row = row_of(&render(&mut app, 100, 30), "字").expect("row");
+        assert!(row.contains("│ 字漢字"), "{row}");
+        let line = cut_columns(Line::raw("a漢b"), 2);
+        assert_eq!(line.spans[0].content, " b");
+        let line = cut_columns(Line::raw("a漢b"), 3);
+        assert_eq!(line.spans[0].content, "b");
+    }
+
+    #[test]
+    fn search_input_popup() {
+        let mut app = app();
+        with_diff(&mut app);
+        app.mode = Mode::Search("new".into());
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn the_shortcuts_popup_lists_the_right_panel_keys() {
+        let mut app = app();
+        app.mode = Mode::Help;
+        let rows: Vec<String> = format!("{}", render(&mut app, 80, 30).backend())
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("go to the next or previous match"))
+        );
     }
 }

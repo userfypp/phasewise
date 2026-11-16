@@ -70,7 +70,7 @@ pub fn text_width(text: &str) -> usize {
     Span::raw(text).width()
 }
 
-fn char_width(c: char) -> usize {
+pub fn char_width(c: char) -> usize {
     Span::raw(c.to_string()).width()
 }
 
