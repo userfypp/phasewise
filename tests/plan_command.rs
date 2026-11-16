@@ -302,6 +302,17 @@ fn the_timeout_can_be_overridden() {
     let out = env.exec(&["goal"], &[("PHASEWISE_PLAN_TIMEOUT_SECONDS", "soon")]);
     assert_eq!(out.code, 1);
     assert!(out.stderr.contains("PHASEWISE_PLAN_TIMEOUT_SECONDS"));
+
+    let started = env.arg_lines().len();
+    let out = env.exec(&["goal"], &[("PHASEWISE_PLAN_TIMEOUT_SECONDS", "0")]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("PHASEWISE_PLAN_TIMEOUT_SECONDS must be at least 1 second"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(env.arg_lines().len(), started, "the agent must not start");
 }
 
 #[test]

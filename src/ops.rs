@@ -444,19 +444,25 @@ Unset it or fix the value."
     }
 }
 
+/// Reads a timeout given in whole seconds by an environment variable. Zero is
+/// refused, as it is for the plan's own timeouts: it would stop the agent at once.
+fn parse_timeout_seconds(name: &str, value: &str) -> Result<Duration> {
+    let secs: u64 = value.trim().parse().map_err(|_| {
+        anyhow!(
+            "{name} must be a whole number of seconds, got `{value}`. Unset it or fix the value."
+        )
+    })?;
+    if secs == 0 {
+        bail!("{name} must be at least 1 second, got `{value}`. Unset it or use a larger value.");
+    }
+    Ok(Duration::from_secs(secs))
+}
+
 /// Limits from the plan; `PHASEWISE_PHASE_TIMEOUT_SECONDS` overrides the phase timeout.
 pub fn settings(run: &Run) -> Result<PhaseSettings> {
     let config = &run.plan.config;
     let phase_timeout = match std::env::var(PHASE_TIMEOUT_ENV) {
-        Ok(value) => {
-            let secs: u64 = value.trim().parse().map_err(|_| {
-                anyhow!(
-                    "{PHASE_TIMEOUT_ENV} must be a whole number of seconds, got `{value}`. \
-Unset it or fix the value."
-                )
-            })?;
-            Duration::from_secs(secs)
-        }
+        Ok(value) => parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?,
         Err(_) => Duration::from_secs(config.phase_timeout_minutes * 60),
     };
     let max_cost_usd = spending_limit(run)?;
@@ -1158,12 +1164,7 @@ pub fn prepare_plan(cwd: &Path, output: Option<&Path>, force: bool) -> Result<Pl
 /// Timeout of one planning session: 20 minutes, or `PHASEWISE_PLAN_TIMEOUT_SECONDS`.
 pub fn plan_timeout() -> Result<Duration> {
     match std::env::var(PLAN_TIMEOUT_ENV) {
-        Ok(value) => value.trim().parse().map(Duration::from_secs).map_err(|_| {
-            anyhow!(
-                "{PLAN_TIMEOUT_ENV} must be a whole number of seconds, got `{value}`. \
-Unset it or fix the value."
-            )
-        }),
+        Ok(value) => parse_timeout_seconds(PLAN_TIMEOUT_ENV, &value),
         Err(_) => Ok(PLAN_TIMEOUT),
     }
 }
