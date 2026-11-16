@@ -1330,55 +1330,60 @@ fn status(json: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `phasewise settings [set|reset]`. Plain output: no colour.
+/// `phasewise settings [set|reset]`. Plain output: no colour. `set` and
+/// `reset` read, change and write the file under the settings lock.
 fn settings_command(action: Option<SettingsAction>) -> Result<ExitCode> {
     let path = settings::require_path()?;
-    let loaded = settings::load_from(&path);
-    for warning in &loaded.warnings {
-        eprintln!("warning: {warning}");
-    }
-    let mut current = loaded.settings;
-    match action {
+    let (key, reset_all) = match &action {
         None => {
-            print_settings(&current, &path);
+            let loaded = settings::load_from(&path);
+            for warning in &loaded.warnings {
+                eprintln!("warning: {warning}");
+            }
+            print_settings(&loaded.settings, &path);
             return Ok(ExitCode::SUCCESS);
         }
-        Some(SettingsAction::Set { key, value }) => {
-            current.set(&key, &value).map_err(|e| anyhow!(e))?;
-            save_settings(&path, &current)?;
-            if let Some(spec) = settings::spec(&key) {
-                let value = settings::shown(spec, &current.get(&key));
-                outln!("{key} = {value}");
-            }
+        Some(SettingsAction::Set { .. }) => (None, false),
+        Some(SettingsAction::Reset { key }) => (key.clone(), key.is_none()),
+    };
+    if let Some(key) = &key
+        && settings::spec(key).is_none()
+    {
+        return Err(anyhow!(settings::unknown_key(key)));
+    }
+    let mut shown = None;
+    let backup = settings::update_at(&path, |current, warnings| {
+        for warning in warnings {
+            eprintln!("warning: {warning}");
         }
-        Some(SettingsAction::Reset { key }) => {
-            if let Some(key) = &key
-                && settings::spec(key).is_none()
-            {
-                return Err(anyhow!(settings::unknown_key(key)));
+        match &action {
+            Some(SettingsAction::Set { key, value }) => {
+                current.set(key, value).map_err(|e| anyhow!(e))?;
+                if let Some(spec) = settings::spec(key) {
+                    shown = Some(format!(
+                        "{key} = {}",
+                        settings::shown(spec, &current.get(key))
+                    ));
+                }
+                Ok(true)
             }
             // A file with problems is replaced by the defaults (its copy is kept).
-            let had_problems = !loaded.warnings.is_empty();
-            if current.reset(key.as_deref()) || had_problems {
-                save_settings(&path, &current)?;
-            }
-            match key {
-                Some(key) => outln!("{key} is back to its default."),
-                None => outln!("All settings are back to their defaults."),
-            }
+            _ => Ok(current.reset(key.as_deref()) || !warnings.is_empty()),
         }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn save_settings(path: &Path, current: &settings::Settings) -> Result<()> {
-    if let Some(backup) = settings::save_to(path, current)? {
+    })?;
+    if let Some(backup) = backup {
         eprintln!(
             "warning: the previous settings file was not valid; a copy is kept as {}.",
             backup.display()
         );
     }
-    Ok(())
+    match (shown, key) {
+        (Some(line), _) => outln!("{line}"),
+        (None, Some(key)) => outln!("{key} is back to its default."),
+        (None, None) if reset_all => outln!("All settings are back to their defaults."),
+        (None, None) => {}
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_settings(current: &settings::Settings, path: &Path) {

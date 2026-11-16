@@ -418,9 +418,21 @@ impl LockGuard {
     /// processes can never both own it (the one exception to temp + rename).
     pub fn acquire(paths: &RunPaths) -> Result<LockGuard> {
         let path = paths.lock_file();
+        match LockGuard::acquire_file(&path) {
+            Ok(guard) => Ok(guard),
+            Err(LockFailure::Busy(pid)) => Err(lock_in_use(pid, &path)),
+            Err(LockFailure::Other(e)) => Err(e),
+        }
+    }
+
+    /// Takes the lock at `path` (a file holding the owner's PID; a lock whose
+    /// owner is dead is taken over). Used by the run lock and the settings lock.
+    pub fn acquire_file(path: &Path) -> Result<LockGuard, LockFailure> {
+        let path = path.to_path_buf();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .with_context(|| format!("Cannot create {}", parent.display()))?;
+                .with_context(|| format!("Cannot create {}", parent.display()))
+                .map_err(LockFailure::Other)?;
         }
         for attempt in 0..2 {
             match fs::OpenOptions::new()
@@ -434,7 +446,10 @@ impl LockGuard {
                         .and_then(|()| file.sync_all());
                     if let Err(e) = written {
                         let _ = fs::remove_file(&path);
-                        return Err(e).with_context(|| format!("Cannot write {}", path.display()));
+                        return Err(LockFailure::Other(
+                            anyhow::Error::new(e)
+                                .context(format!("Cannot write {}", path.display())),
+                        ));
                     }
                     return Ok(LockGuard { path });
                 }
@@ -448,19 +463,29 @@ impl LockGuard {
                         None => !trimmed.is_empty(),
                     };
                     if !stale || attempt == 1 {
-                        return Err(lock_in_use(pid, &path));
+                        return Err(LockFailure::Busy(pid));
                     }
                     if !take_over_stale(&path, trimmed) {
-                        return Err(lock_in_use(None, &path));
+                        return Err(LockFailure::Busy(None));
                     }
                 }
                 Err(e) => {
-                    return Err(e).with_context(|| format!("Cannot create {}", path.display()));
+                    return Err(LockFailure::Other(
+                        anyhow::Error::new(e).context(format!("Cannot create {}", path.display())),
+                    ));
                 }
             }
         }
-        Err(lock_in_use(None, &path))
+        Err(LockFailure::Busy(None))
     }
+}
+
+/// Why a lock file could not be taken.
+#[derive(Debug)]
+pub enum LockFailure {
+    /// Held by a live process (its PID, when readable).
+    Busy(Option<u32>),
+    Other(anyhow::Error),
 }
 
 /// Removes a lock that looked stale (it held `seen`). The file is moved aside

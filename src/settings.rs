@@ -11,11 +11,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 
 use crate::plan::{self, AgentKind};
-use crate::state::write_atomic;
+use crate::state::{LockFailure, LockGuard, write_atomic};
+
+/// How long an update waits for another one to finish.
+const LOCK_WAIT: Duration = Duration::from_secs(10);
 
 /// Name of the settings file inside the configuration directory.
 pub const FILE_NAME: &str = "settings.toml";
@@ -416,9 +420,53 @@ pub fn save_to(path: &Path, settings: &Settings) -> Result<Option<PathBuf>> {
     Ok(backup)
 }
 
+/// Reads the settings, applies `change` and saves them, all under a lock file
+/// (`settings.toml.lock`, next to the settings) so that concurrent updates do
+/// not lose each other's changes. The lock names its owner's PID and a dead
+/// owner's lock is taken over, so a crash never blocks later updates.
+/// `change` gets the loaded settings and their warnings and returns whether to
+/// save them. Returns the backup path, if one was made.
+pub fn update_at<F>(path: &Path, change: F) -> Result<Option<PathBuf>>
+where
+    F: FnOnce(&mut Settings, &[String]) -> Result<bool>,
+{
+    let lock_path = path.with_file_name(format!("{FILE_NAME}.lock"));
+    let deadline = Instant::now() + LOCK_WAIT;
+    let _guard = loop {
+        match LockGuard::acquire_file(&lock_path) {
+            Ok(guard) => break guard,
+            Err(LockFailure::Busy(_)) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(LockFailure::Busy(pid)) => {
+                let holder = pid.map_or_else(
+                    || "another phasewise process".to_string(),
+                    |pid| format!("phasewise process {pid}"),
+                );
+                return Err(anyhow!(
+                    "The settings are being changed by {holder} (lock file: {}). Try again; \
+if no phasewise process is running, delete the lock file.",
+                    lock_path.display()
+                ));
+            }
+            Err(LockFailure::Other(e)) => return Err(e),
+        }
+    };
+    let loaded = load_from(path);
+    let mut settings = loaded.settings;
+    if change(&mut settings, &loaded.warnings)? {
+        save_to(path, &settings)
+    } else {
+        Ok(None)
+    }
+}
+
 /// Writes the settings of this process's environment.
 pub fn save(settings: &Settings) -> Result<Option<PathBuf>> {
-    save_to(&require_path()?, settings)
+    update_at(&require_path()?, |current, _| {
+        *current = settings.clone();
+        Ok(true)
+    })
 }
 
 /// Whether to ring the bell: it is enabled and the output is a terminal (a
@@ -556,6 +604,56 @@ mod tests {
         let path = dir.path().join("a").join("b").join(FILE_NAME);
         save_to(&path, &Settings::default()).expect("saved");
         assert!(path.exists());
+    }
+
+    #[test]
+    fn parallel_updates_do_not_lose_each_other() {
+        let changes = [
+            ("limits", "off"),
+            ("bell", "on"),
+            ("color", "never"),
+            ("agent", "codex"),
+            ("model", "some-model"),
+            ("effort", "low"),
+        ];
+        for _ in 0..20 {
+            let dir = temp();
+            let path = dir.path().join(FILE_NAME);
+            std::thread::scope(|scope| {
+                for (key, value) in changes {
+                    let path = &path;
+                    scope.spawn(move || {
+                        update_at(path, |s, _| {
+                            s.set(key, value).map_err(|e| anyhow!(e))?;
+                            Ok(true)
+                        })
+                        .expect("updated");
+                    });
+                }
+            });
+            let loaded = load_from(&path);
+            for (key, value) in changes {
+                assert_eq!(loaded.settings.get(key), value, "{key} was lost");
+            }
+            assert!(!path.with_file_name("settings.toml.lock").exists());
+        }
+    }
+
+    #[test]
+    fn a_lock_left_by_a_dead_process_does_not_block_and_reading_makes_no_lock() {
+        let dir = temp();
+        let path = dir.path().join(FILE_NAME);
+        let lock = dir.path().join("settings.toml.lock");
+        load_from(&path);
+        assert!(!lock.exists());
+        std::fs::write(&lock, "4000000000\n").expect("lock");
+        update_at(&path, |s, _| {
+            s.set("bell", "on").map_err(|e| anyhow!(e))?;
+            Ok(true)
+        })
+        .expect("updated");
+        assert_eq!(load_from(&path).settings.get("bell"), "on");
+        assert!(!lock.exists());
     }
 
     #[test]
