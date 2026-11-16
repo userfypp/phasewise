@@ -250,6 +250,9 @@ fn key_line(text: &str, fm_first_line: usize, fm_lines: usize, key: &str) -> usi
 
 /// Parses plan text. Returns every problem found, sorted by line.
 pub fn parse(text: &str) -> Result<Plan, Vec<PlanError>> {
+    // Many Windows editors start a UTF-8 file with a byte order mark. It is
+    // not part of the first line, and dropping it leaves line numbers intact.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut errors = Vec::new();
     let mut config = PlanConfig::default();
     let mut body_start = 0;
@@ -701,6 +704,15 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         ));
     }
     for phase in &phases {
+        if phase.title.is_empty() {
+            errors.push(err(
+                phase.line,
+                format!(
+                    "phase {} has no title; write the title after `##` on its heading",
+                    phase.number
+                ),
+            ));
+        }
         if phase.body.is_empty() {
             errors.push(err(
                 phase.line,
@@ -712,7 +724,7 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         }
     }
     let mut seen: Vec<(String, usize)> = Vec::new();
-    for phase in &phases {
+    for phase in phases.iter().filter(|p| !p.title.is_empty()) {
         let key = phase.title.to_lowercase();
         match seen.iter().find(|(k, _)| *k == key) {
             Some((_, first)) => errors.push(err(
@@ -950,6 +962,34 @@ mod tests {
     }
 
     #[test]
+    fn a_byte_order_mark_does_not_hide_the_front_matter() {
+        let text = "+++\nagent = \"codex\"\nmax_retries = 3\n+++\n# T\n\nctx\n\n## A\n\nbody\n\n```verify\nmake\n```\n";
+        let plain = ok(text);
+        let marked = ok(&format!("\u{feff}{text}"));
+        assert_eq!(marked.config.agent, AgentKind::Codex);
+        assert_eq!(marked.config.max_retries, 3);
+        assert_eq!(marked.title, plain.title);
+        assert_eq!(marked.context, plain.context);
+        assert_eq!(marked.phases[0].title, plain.phases[0].title);
+        assert_eq!(marked.phases[0].body, plain.phases[0].body);
+        assert_eq!(marked.phases[0].verify, plain.phases[0].verify);
+        assert_eq!(marked.phases[0].line, plain.phases[0].line);
+    }
+
+    #[test]
+    fn a_byte_order_mark_keeps_error_lines() {
+        let e = errs("\u{feff}+++\nfoo = 1\n+++\n## A\n\nbody\n");
+        assert_eq!(e[0].0, 2);
+    }
+
+    #[test]
+    fn a_byte_order_mark_without_front_matter_is_ignored() {
+        let plan = ok("\u{feff}# T\n\n## A\n\nbody\n");
+        assert_eq!(plan.title.as_deref(), Some("T"));
+        assert_eq!(plan.phases[0].line, 3);
+    }
+
+    #[test]
     fn crlf_unknown_key_line() {
         let e = errs("+++\r\nfoo = 1\r\n+++\r\n## A\r\n\r\nbody\r\n");
         assert_eq!(e[0].0, 2);
@@ -1137,6 +1177,25 @@ mod tests {
         let e = errs("## A\n\n```verify\nmake\n```\n\n## B\n\nx\n");
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].0, 1);
+    }
+
+    #[test]
+    fn an_empty_phase_title_is_an_error_at_its_heading() {
+        for heading in ["## ", "##", "## ##"] {
+            let text = format!("# T\n\n{heading}\n\nbody\n");
+            let e = errs(&text);
+            assert_eq!(e.len(), 1, "{heading:?}: {e:?}");
+            assert_eq!(e[0].0, 3, "{heading:?}");
+            assert!(e[0].1.contains("phase 1 has no title"), "{}", e[0].1);
+        }
+    }
+
+    #[test]
+    fn two_empty_phase_titles_are_not_reported_as_duplicates() {
+        let e = errs("## \n\na\n\n## \n\nb\n");
+        assert_eq!(e.len(), 2, "{e:?}");
+        assert_eq!((e[0].0, e[1].0), (1, 5));
+        assert!(e.iter().all(|(_, m)| m.contains("has no title")), "{e:?}");
     }
 
     #[test]

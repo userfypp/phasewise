@@ -64,7 +64,7 @@ finish a run that stopped at its limit.
   (`## Python 3: migrate` stays as written), nor is a prefix whose number is
   not the phase's position, or one that would leave nothing (`## Phase 1:`).
 - A `##` inside a fenced code block is not a heading.
-- Titles must be unique, ignoring case.
+- A title must not be empty (`##` with nothing after it) and must be unique, ignoring case.
 - Level-3 and deeper headings (`###`) stay inside the phase body.
 - The body is everything after the heading up to the next phase, without the
   `verify` blocks. It must not be empty.
@@ -167,7 +167,7 @@ line, and exits with code 1:
 - unknown `agent`, in the front matter or in a phase block (the valid values are listed);
 - `phase_timeout_minutes` or `verify_timeout_seconds` below 1, or `max_cost_usd` not above 0;
 - a plan with no phases;
-- a phase with an empty body;
+- a phase with an empty title or an empty body;
 - duplicate phase titles (reported at the second one, with the first one's line);
 - a `verify` block before the first phase;
 - an invalid `model` or `effort`, or the value `default`;
