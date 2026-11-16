@@ -450,10 +450,12 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
             st.heading(&format!("{}. {}", phase.number, phase.title))
         );
         let agent = phase.agent.map(|a| a.to_string());
+        let timeout = phase.phase_timeout_minutes.map(|m| format!("{m} min"));
         let settings: Vec<String> = [
             ("agent", &agent),
             ("model", &phase.model),
             ("effort", &phase.effort),
+            ("timeout", &timeout),
         ]
         .into_iter()
         .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
