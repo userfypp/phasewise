@@ -24,8 +24,10 @@ cargo install --path .
 
 Then run `phasewise doctor` inside your project. It checks git, both agents
 (installed, version and whether they are logged in) and whether the repository
-is ready (a first commit, a branch checked out, a clean working tree). A login
-that is not confirmed is a warning, not an error.
+is ready (a first commit, a branch checked out, a clean working tree, a valid
+plan). It exits `1` when git, both agents or any repository check fails. A login
+that is not confirmed, or a plan whose own agent is not installed (`run --agent`
+can override it), is a warning, not an error.
 
 ## How it works
 

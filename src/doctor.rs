@@ -55,6 +55,7 @@ pub fn run(cwd: &Path) -> Report {
 
     lines.push(String::new());
     lines.push("Repository".to_string());
+    let repository_start = lines.len();
     let mut plan_agents_ok = true;
     if git_ok {
         plan_agents_ok = repository_lines(cwd, &found_kinds, &mut lines);
@@ -62,7 +63,10 @@ pub fn run(cwd: &Path) -> Report {
         lines.push("  ✗ cannot check the repository without git".to_string());
     }
 
-    let ok = git_ok && agents_found > 0 && plan_agents_ok;
+    let repository_ok = !lines[repository_start..]
+        .iter()
+        .any(|line| line.starts_with("  ✗"));
+    let ok = git_ok && agents_found > 0 && plan_agents_ok && repository_ok;
     lines.push(String::new());
     lines.push(
         if !git_ok {
@@ -71,8 +75,10 @@ pub fn run(cwd: &Path) -> Report {
             "Not ready: neither claude nor codex was found. Install one of them or set PHASEWISE_CLAUDE_BIN / PHASEWISE_CODEX_BIN."
         } else if !plan_agents_ok {
             "Not ready: the plan needs an agent that was not found. Install it or set its PHASEWISE_*_BIN variable."
+        } else if !repository_ok {
+            "Not ready: fix the ✗ lines in the repository section before `phasewise run`."
         } else {
-            "Tools are ready. Fix any ✗ in the repository section before `phasewise run`."
+            "Tools are ready and the repository is in order."
         }
         .to_string(),
     );
@@ -191,6 +197,16 @@ fn repository_lines(cwd: &Path, found: &[AgentKind], lines: &mut Vec<String>) ->
                     "  ✓ {PLAN_FILE} is valid ({})",
                     crate::display::phase_count(plan.phases.len())
                 ));
+                if !found.contains(&plan.config.agent) {
+                    let kind = plan.config.agent;
+                    let var = match kind {
+                        AgentKind::Claude => "PHASEWISE_CLAUDE_BIN",
+                        AgentKind::Codex => "PHASEWISE_CODEX_BIN",
+                    };
+                    lines.push(format!(
+                        "  ! the plan's agent is {kind}, which was not found; install it, set {var}, or run with `--agent`"
+                    ));
+                }
                 for kind in [AgentKind::Claude, AgentKind::Codex] {
                     let phases: Vec<String> = plan
                         .phases
