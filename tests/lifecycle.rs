@@ -227,6 +227,30 @@ fn rollback_returns_to_a_checkpoint_and_next_reruns_the_phase() {
 }
 
 #[test]
+fn rollback_does_not_report_phases_that_were_already_pending() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+    let out = env.ok(&["rollback", "1", "--yes"], &[]);
+    assert!(!out.stdout.contains("pending again"), "{}", out.stdout);
+    assert!(out.stdout.contains("phasewise next"), "{}", out.stdout);
+}
+
+#[test]
+fn rollback_counts_only_the_phases_it_reset() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    env.ok(&["next"], &[]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+    let out = env.ok(&["rollback", "1", "--yes"], &[]);
+    assert!(
+        out.stdout.contains("1 later phase(s) are pending again."),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn rollback_refuses_a_target_that_changed_after_confirmation() {
     let env = Env::new();
     env.ok(&["run", "--auto"], &[]);
