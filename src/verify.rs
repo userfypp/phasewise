@@ -188,14 +188,20 @@ fn read_tail(log_path: &Path, start: u64, end: u64) -> Result<String> {
     file.take(end.saturating_sub(from))
         .read_to_end(&mut bytes)?;
     // The window may begin in the middle of a line (or of a character): drop
-    // that partial line. A window without any newline is kept as it is.
+    // that partial line, unless nothing else is left (one very long line).
     let mut body = bytes.as_slice();
     if from > start
         && let Some(i) = body.iter().position(|&b| b == b'\n')
+        && !tail_lines(&String::from_utf8_lossy(&body[i + 1..])).is_empty()
     {
         body = &body[i + 1..];
     }
     let text = String::from_utf8_lossy(body);
+    Ok(tail_lines(&text).join("\n"))
+}
+
+/// The last `TAIL_LINES` lines of `text` without phasewise's own trailer line.
+fn tail_lines(text: &str) -> Vec<&str> {
     let mut lines: Vec<&str> = text.lines().collect();
     if lines
         .last()
@@ -204,7 +210,7 @@ fn read_tail(log_path: &Path, start: u64, end: u64) -> Result<String> {
         lines.pop();
     }
     let skip = lines.len().saturating_sub(TAIL_LINES);
-    Ok(lines[skip..].join("\n"))
+    lines.split_off(skip)
 }
 
 #[cfg(test)]
@@ -275,8 +281,14 @@ mod tests {
     fn tail_of_one_long_line_is_bounded() {
         let mut content = vec![b'a'; 1024 * 1024];
         content.extend_from_slice(b"\nexit code: 0\n");
-        // The partial line is dropped, so nothing but the trailer is left.
-        assert_eq!(tail_of(&content, 0), "");
+        // The window holds the end of the line and the trailer: the end of
+        // the line is kept, bounded, rather than nothing at all.
+        let out = tail_of(&content, 0);
+        assert_eq!(
+            out.len() as u64,
+            TAIL_WINDOW - "\nexit code: 0\n".len() as u64
+        );
+        assert!(out.bytes().all(|b| b == b'a'));
         // Without a trailing newline the window itself is returned, bounded.
         let out = tail_of(&vec![b'a'; 1024 * 1024], 0);
         assert_eq!(out.len() as u64, TAIL_WINDOW);
