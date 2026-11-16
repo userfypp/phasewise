@@ -241,6 +241,23 @@ fn run_listing(program: &OsString, args: &[&str], not_found: &str) -> Result<Str
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Removes `prefix` where it starts a path: at the start of `text` or after a
+/// space, a quote (`'` or `"`) or `=`. A path that merely ends with it stays.
+fn strip_root(text: &str, prefix: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (i, _) in text.match_indices(prefix) {
+        let starts_path =
+            i == 0 || matches!(text[..i].chars().next_back(), Some(' ' | '\'' | '"' | '='));
+        if starts_path && i >= last {
+            out.push_str(&text[last..i]);
+            last = i + prefix.len();
+        }
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
 /// Shortens a tool detail for display: absolute paths under `root` become
 /// relative, only the first line is kept, at most 200 characters.
 fn tidy_detail(raw: &str, root: &Path) -> String {
@@ -248,7 +265,7 @@ fn tidy_detail(raw: &str, root: &Path) -> String {
     let root_str = root.to_string_lossy();
     let root_str = root_str.trim_end_matches('/');
     if !root_str.is_empty() {
-        text = text.replace(&format!("{root_str}/"), "");
+        text = strip_root(&text, &format!("{root_str}/"));
         if text == root_str {
             text = ".".to_string();
         }
@@ -284,6 +301,24 @@ mod tests {
         assert_eq!(tidy_detail("cat /work/repo/a.txt", root), "cat a.txt");
         let long = "é".repeat(500);
         assert_eq!(tidy_detail(&long, root).chars().count(), 200);
+    }
+
+    #[test]
+    fn detail_strips_root_only_at_the_start_of_a_path() {
+        let root = Path::new("/work/repo");
+        assert_eq!(
+            tidy_detail("/home/u/work/repo/x.rs", root),
+            "/home/u/work/repo/x.rs"
+        );
+        assert_eq!(
+            tidy_detail("cat /home/u/work/repo/x.rs", root),
+            "cat /home/u/work/repo/x.rs"
+        );
+        assert_eq!(tidy_detail("/work/repo/x.rs", root), "x.rs");
+        assert_eq!(tidy_detail("cat /work/repo/x.rs", root), "cat x.rs");
+        assert_eq!(tidy_detail("cat '/work/repo/x.rs'", root), "cat 'x.rs'");
+        assert_eq!(tidy_detail("cat \"/work/repo/x.rs\"", root), "cat \"x.rs\"");
+        assert_eq!(tidy_detail("--file=/work/repo/x.rs", root), "--file=x.rs");
     }
 
     #[test]

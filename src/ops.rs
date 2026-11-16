@@ -455,6 +455,12 @@ fn parse_timeout_seconds(name: &str, value: &str) -> Result<Duration> {
     if secs == 0 {
         bail!("{name} must be at least 1 second, got `{value}`. Unset it or use a larger value.");
     }
+    if secs > crate::plan::MAX_TIMEOUT_SECONDS {
+        bail!(
+            "{name} must be at most {} seconds (one year), got `{value}`. Unset it or use a smaller value.",
+            crate::plan::MAX_TIMEOUT_SECONDS
+        );
+    }
     Ok(Duration::from_secs(secs))
 }
 
@@ -463,7 +469,7 @@ pub fn settings(run: &Run) -> Result<PhaseSettings> {
     let config = &run.plan.config;
     let phase_timeout = match std::env::var(PHASE_TIMEOUT_ENV) {
         Ok(value) => parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?,
-        Err(_) => Duration::from_secs(config.phase_timeout_minutes * 60),
+        Err(_) => Duration::from_secs(config.phase_timeout_minutes.saturating_mul(60)),
     };
     let max_cost_usd = spending_limit(run)?;
     Ok(PhaseSettings {
