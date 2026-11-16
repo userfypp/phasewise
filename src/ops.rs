@@ -682,6 +682,40 @@ fn reset_phase(run: &mut Run, number: usize) {
     }
 }
 
+/// Refuses a reset to `target` that would drop commits the user made on the
+/// run branch: those that are not checkpoints of this run and are on no other
+/// branch or tag. Nothing is changed.
+fn check_no_commits_lost(run: &Run, target: &str) -> Result<()> {
+    let checkpoints: Vec<String> = run
+        .state
+        .phases
+        .iter()
+        .filter_map(|p| p.checkpoint_sha.clone())
+        .collect();
+    let lost = run.git.commits_that_would_be_lost(target, &checkpoints)?;
+    if lost.is_empty() {
+        return Ok(());
+    }
+    let short = |sha: &str| sha.chars().take(7).collect::<String>();
+    let mut list: Vec<String> = lost
+        .iter()
+        .take(5)
+        .map(|c| format!("{} {}", short(&c.sha), c.subject))
+        .collect();
+    if lost.len() > 5 {
+        list.push(format!("and {} more", lost.len() - 5));
+    }
+    bail!(
+        "Going back to {} would remove {} commit(s) that are only on {}: {}. Nothing was changed. \
+Keep them first with `git branch keep-my-work` (any new branch or tag name works), then run \
+the command again. Commits on no branch stay reachable through `git reflog` for a while.",
+        short(target),
+        lost.len(),
+        run.state.run_branch,
+        list.join("; ")
+    )
+}
+
 /// Reruns the highest-numbered `failed` or `awaiting_review` phase from the
 /// checkpoint before it, in a fresh session, with `note` added to the prompt.
 pub fn retry(
@@ -722,6 +756,7 @@ then `phasewise rollback 0` to start over.",
     // Before discarding anything: a refused retry must leave the work as it is.
     check_model_override(run, overrides, number)?;
     check_budget(run, &settings(run)?, number)?;
+    check_no_commits_lost(run, &previous)?;
     run.git.reset_hard(&previous)?;
     run.git.clean_untracked()?;
     reset_phase(run, number);
@@ -735,7 +770,9 @@ then `phasewise rollback 0` to start over.",
 /// `rollback` checks again under the lock.
 pub fn prepare_rollback(run: &Run, k: usize) -> Result<String> {
     check_active_unlocked(run)?;
-    rollback_target(run, k)
+    let sha = rollback_target(run, k)?;
+    check_no_commits_lost(run, &sha)?;
+    Ok(sha)
 }
 
 fn rollback_target(run: &Run, k: usize) -> Result<String> {
@@ -773,6 +810,7 @@ now {}. Nothing was changed; run `phasewise rollback {k}` again.",
             sha.chars().take(7).collect::<String>()
         );
     }
+    check_no_commits_lost(run, &sha)?;
     run.git.reset_hard(&sha)?;
     run.git.clean_untracked()?;
     let numbers: Vec<usize> = run.state.phases.iter().map(|p| p.number).collect();

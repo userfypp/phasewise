@@ -396,6 +396,9 @@ Environment variables:
   note. `phasewise status` shows the full failure message. A retry starts again
   from the checkpoint before the phase and discards everything uncommitted,
   including edits you made by hand, so put a fix you want to keep in the note.
+  Commits you made by hand on the run branch are protected: if `retry` or
+  `rollback` would drop one that is on no other branch or tag, it refuses and
+  changes nothing. Run `git branch keep-my-work`, then repeat the command.
 - **"another git process is using the repository"**: an editor or another
   terminal is running git. phasewise waits a few seconds; if the lock stays,
   close that tool, or delete `.git/index.lock` if no git command is running,

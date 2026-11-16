@@ -319,6 +319,49 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
             .to_string())
     }
 
+    /// Commits between `target` and `HEAD` that a reset to `target` would
+    /// leave on no branch or tag, newest first. `keep` lists the commits that
+    /// are phasewise's own (checkpoints): they are never reported. A commit
+    /// reachable from a ref other than the current branch (and the stash) is
+    /// not lost either.
+    pub fn commits_that_would_be_lost(
+        &self,
+        target: &str,
+        keep: &[String],
+    ) -> Result<Vec<CommitInfo>> {
+        let range = format!("{target}..HEAD");
+        let listed = self.run(&["rev-list", &range])?;
+        let keep: Vec<String> = keep.iter().filter_map(|k| self.rev_parse(k).ok()).collect();
+        let candidates: Vec<&str> = listed
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty() && !keep.iter().any(|k| k == sha))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let current = self
+            .output(&["symbolic-ref", "--quiet", "HEAD"], None)?
+            .stdout;
+        let current = String::from_utf8_lossy(&current).trim().to_string();
+        let mut lost = Vec::new();
+        for sha in candidates {
+            let refs = self.run(&["for-each-ref", "--contains", sha, "--format=%(refname)"])?;
+            let elsewhere = refs
+                .lines()
+                .map(str::trim)
+                .any(|r| !r.is_empty() && r != current && r != "refs/stash");
+            if !elsewhere {
+                let subject = self.run(&["log", "-1", "--format=%s", sha])?;
+                lost.push(CommitInfo {
+                    sha: sha.to_string(),
+                    subject: subject.trim().to_string(),
+                });
+            }
+        }
+        Ok(lost)
+    }
+
     pub fn reset_hard(&self, sha: &str) -> Result<()> {
         self.run(&["reset", "--hard", sha]).map(|_| ())
     }
@@ -531,6 +574,13 @@ pub enum SquashResult {
     Clean,
     /// These paths conflict.
     Conflict(Vec<String>),
+}
+
+/// A commit as shown to the user: full SHA and subject line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
+    pub sha: String,
+    pub subject: String,
 }
 
 /// Added/removed line counts of one file; `None` for binary files.

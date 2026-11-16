@@ -226,6 +226,56 @@ fn rollback_returns_to_a_checkpoint_and_next_reruns_the_phase() {
     env.check_invariants();
 }
 
+/// A finished run plus a commit made by hand on the run branch.
+fn env_with_a_hand_made_commit() -> (Env, String, String) {
+    let env = Env::new();
+    env.ok(&["run", "--auto"], &[]);
+    env.repo.commit_file("mine.txt", "mine\n", "my own work");
+    let head = env.repo.git_trim(&["rev-parse", "HEAD"]);
+    let log = env.repo.git_trim(&["log", "--format=%H"]);
+    (env, head, log)
+}
+
+#[test]
+fn retry_refuses_to_drop_a_commit_made_by_hand_on_the_run_branch() {
+    let (env, head, log) = env_with_a_hand_made_commit();
+    let out = env.exec(&["retry"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("my own work"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("git branch keep-my-work"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), head);
+    assert_eq!(env.repo.git_trim(&["log", "--format=%H"]), log);
+    assert!(env.exists("mine.txt"));
+    assert_eq!(env.statuses(), ["done", "done", "awaiting_review"]);
+
+    env.repo.git(&["branch", "keep"]);
+    env.ok(&["retry"], &[]);
+    assert!(!env.exists("mine.txt"));
+    assert_eq!(env.repo.git_trim(&["rev-parse", "keep"]), head);
+}
+
+#[test]
+fn rollback_refuses_to_drop_a_commit_made_by_hand_on_the_run_branch() {
+    let (env, head, log) = env_with_a_hand_made_commit();
+    let out = env.exec(&["rollback", "1", "--yes"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("my own work"), "{}", out.stderr);
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), head);
+    assert_eq!(env.repo.git_trim(&["log", "--format=%H"]), log);
+    assert!(env.exists("mine.txt") && env.exists("phase-3.txt"));
+    assert_eq!(env.statuses(), ["done", "done", "awaiting_review"]);
+
+    env.repo.git(&["branch", "keep"]);
+    env.ok(&["rollback", "1", "--yes"], &[]);
+    assert_eq!(env.statuses(), ["done", "pending", "pending"]);
+    assert!(!env.exists("mine.txt"));
+    assert_eq!(env.repo.git_trim(&["rev-parse", "keep"]), head);
+}
+
 #[test]
 fn rollback_does_not_report_phases_that_were_already_pending() {
     let env = Env::new();

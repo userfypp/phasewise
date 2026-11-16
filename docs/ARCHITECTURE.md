@@ -239,6 +239,11 @@ These hold everywhere. A change that breaks one is a design change.
   `index.lock` while a checkpoint is committed. A command that still meets a
   held lock is retried for about 3.5 seconds before the error, which names the
   lock file and what to do. phasewise never deletes a lock file.
+- **`retry` and `rollback` never drop a commit that is only on the run
+  branch and is not a checkpoint.** Before `git reset --hard`,
+  `Git::commits_that_would_be_lost` lists the commits between the target and
+  `HEAD`, minus the run's checkpoints and minus those reachable from another
+  ref; if any remain, the operation refuses before changing anything.
 - **`git clean` never touches `.phasewise/`**: it runs with
   `-e /.phasewise/`, and the directory is also excluded.
 - **State is written atomically:** a temporary file in the same directory,
