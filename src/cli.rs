@@ -597,12 +597,42 @@ fn init() -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("Cannot read the current directory")?;
     let git = Git::discover(&cwd)?;
     let path = git.root().join(PLAN_FILE);
-    if path.exists() {
-        outln!("{PLAN_FILE} already exists; left untouched.");
-    } else {
-        std::fs::write(&path, PLAN_TEMPLATE)
-            .with_context(|| format!("Cannot write {}", path.display()))?;
-        outln!("Created {}.", shown_path(&path).display());
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(&path, PLAN_TEMPLATE)
+                .with_context(|| format!("Cannot write {}", path.display()))?;
+            outln!("Created {}.", shown_path(&path).display());
+        }
+        Err(e) => {
+            return Err(anyhow!(
+                "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+            ));
+        }
+        Ok(meta) => match std::fs::metadata(&path) {
+            Ok(target) if target.is_file() => {
+                outln!("{PLAN_FILE} already exists; left untouched.");
+            }
+            Ok(target) if target.is_dir() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a directory, not a plan. Move it away and run `phasewise init` again."
+                ));
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is not a regular file. Move it away and run `phasewise init` again."
+                ));
+            }
+            Err(_) if meta.file_type().is_symlink() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a symbolic link that points nowhere. Remove or fix the link and run `phasewise init` again."
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+                ));
+            }
+        },
     }
     if git.ensure_excluded(".phasewise/")? {
         outln!("Added .phasewise/ to the git exclude file.");
