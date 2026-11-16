@@ -208,6 +208,12 @@ pub fn load(path: &Path) -> Result<Plan> {
                 path.display()
             ));
         }
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(anyhow!(
+                "The plan file {} is not valid UTF-8. Save it as UTF-8 text and try again.",
+                path.display()
+            ));
+        }
         Err(e) => {
             return Err(anyhow!(
                 "Cannot read the plan file {}: {e}. Check the path and its permissions.",
@@ -1205,6 +1211,25 @@ mod tests {
         std::fs::write(&path, "## A\n\n## B\n\nx\n").unwrap();
         let msg = load(&path).unwrap_err().to_string();
         assert!(msg.starts_with(&format!("{}:1: ", path.display())), "{msg}");
+    }
+
+    #[test]
+    fn load_says_when_the_file_is_not_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.md");
+        std::fs::write(&path, b"## A\n\ncaf\xe9\n").unwrap();
+        let msg = load(&path).unwrap_err().to_string();
+        assert!(msg.contains("is not valid UTF-8"), "{msg}");
+        assert!(msg.contains("Save it as UTF-8"), "{msg}");
+        assert!(!msg.contains("permissions"), "{msg}");
+    }
+
+    #[test]
+    fn load_still_reports_a_file_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory exists but cannot be read as a file.
+        let msg = load(dir.path()).unwrap_err().to_string();
+        assert!(msg.contains("Check the path and its permissions"), "{msg}");
     }
 
     #[test]
