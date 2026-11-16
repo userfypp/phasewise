@@ -15,8 +15,8 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use crate::agent::LaunchOptions;
 use crate::agent::{ModelInfo, agent_for};
 use crate::display::{
-    event_line, failure_kind_label, model_name, money, path_in, phase_count, phase_header,
-    phase_summary, plan_event_line, plan_header, status_label,
+    Report, ReportPhase, event_line, failure_kind_label, model_name, money, path_in, phase_count,
+    phase_header, phase_summary, plan_event_line, plan_header, report_markdown, status_label,
 };
 use crate::engine::{self, EngineEvent};
 use crate::git::Git;
@@ -24,7 +24,7 @@ use crate::ops::{self, NextOutcome, Overrides, PlanEvent, PlanRequest, PlanResul
 use crate::plan::{self, AgentKind};
 use crate::process;
 use crate::settings;
-use crate::state::{PhaseStatus, RunState, RunStatus};
+use crate::state::{self, PhaseStatus, RunState, RunStatus};
 use crate::style::{Role, Styler};
 
 // Output to stdout goes through these macros instead of `println!`/`print!`,
@@ -219,6 +219,19 @@ pub enum Command {
         n: Option<u32>,
     },
 
+    /// Print a Markdown summary of the run for a pull request description
+    #[command(
+        after_help = "Examples:\n  phasewise report\n  phasewise report --output report.md --force"
+    )]
+    Report {
+        /// Write the report to this file instead of printing it
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Overwrite the output file if it exists
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Open the review TUI
     #[command(after_help = "Examples:\n  phasewise review")]
     Review,
@@ -350,6 +363,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Status { json }) => status(json),
         Some(Command::Diff { n }) => diff(n),
         Some(Command::Logs { n }) => logs(n),
+        Some(Command::Report { output, force }) => report(output.as_deref(), force),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
         Some(Command::Settings { action }) => settings_command(action),
         Some(Command::Abort) => abort_command(),
@@ -1181,6 +1195,15 @@ fn run_limits(run: &Run) -> Option<crate::state::RateLimits> {
     crate::state::RateLimits::load(run.git.root()).filter(|l| l.agent == run.state.agent)
 }
 
+/// Files a phase changed: between the checkpoint before it and its own.
+fn phase_files(run: &Run, number: usize) -> Option<usize> {
+    let state = &run.state;
+    let to = state.phase(number)?.checkpoint_sha.as_deref()?;
+    run.git
+        .changed_file_count(state.checkpoint(number - 1)?, to)
+        .ok()
+}
+
 fn status(json: bool) -> Result<ExitCode> {
     let Some(run) = ops::load_current(&current_dir()?)? else {
         if json {
@@ -1254,13 +1277,8 @@ fn status(json: bool) -> Result<ExitCode> {
         .phases
         .iter()
         .map(|p| {
-            let files = match (state.checkpoint(p.number - 1), p.checkpoint_sha.as_deref()) {
-                (Some(from), Some(to)) => run
-                    .git
-                    .changed_file_count(from, to)
-                    .map_or_else(|_| "-".to_string(), |n| n.to_string()),
-                _ => "-".to_string(),
-            };
+            let files =
+                phase_files(&run, p.number).map_or_else(|| "-".to_string(), |n| n.to_string());
             let cost = p
                 .cost_usd
                 .map_or_else(|| "-".to_string(), |c| format!("${c:.4}"));
@@ -1494,6 +1512,78 @@ fn existing_phase(state: &RunState, n: u32) -> Result<usize> {
         ));
     }
     Ok(n)
+}
+
+/// `phasewise report`: the run as Markdown, on stdout or in a file.
+fn report(output: Option<&Path>, force: bool) -> Result<ExitCode> {
+    let cwd = current_dir()?;
+    // Refuse an existing output before reading the run, as `plan` does.
+    let target = output.map(|path| cwd.join(path));
+    if let Some(target) = &target {
+        if target.exists() && !force {
+            return Err(anyhow!(
+                "{} already exists. Choose another path with `--output`, or pass `--force` to overwrite it.",
+                target.display()
+            ));
+        }
+        if target.is_dir() {
+            return Err(anyhow!(
+                "{} is a directory. Choose a file path with `--output`.",
+                target.display()
+            ));
+        }
+    }
+    let run = load_run()?;
+    let state = &run.state;
+    let now = jiff::Timestamp::now();
+    let phases = state
+        .phases
+        .iter()
+        .map(|p| {
+            let plan_phase = run.plan.phases.get(p.number - 1);
+            ReportPhase {
+                number: p.number,
+                title: p.title.clone(),
+                status: p.status,
+                agent: engine::phase_agent(state, &run.plan, p.number),
+                secs: p.duration_secs(now),
+                cost_usd: p.cost_usd,
+                files: phase_files(&run, p.number),
+                verify: plan_phase.map(|ph| ph.verify.clone()).unwrap_or_default(),
+            }
+        })
+        .collect();
+    let last_checkpoint = state
+        .phases
+        .iter()
+        .rev()
+        .find_map(|p| p.checkpoint_sha.as_deref());
+    let report = Report {
+        title: state.plan_title.clone(),
+        run_id: state.run_id.clone(),
+        run_branch: state.run_branch.clone(),
+        original_branch: state.original_branch.clone(),
+        agent: state.agent,
+        verify: run.plan.config.verify.clone(),
+        phases,
+        total_secs: state.duration_secs(),
+        total_cost: state
+            .phases
+            .iter()
+            .any(|p| p.cost_usd.is_some())
+            .then(|| state.cost_usd()),
+        total_files: last_checkpoint
+            .and_then(|to| run.git.changed_file_count(&state.base_sha, to).ok()),
+    };
+    let text = report_markdown(&report);
+    match target {
+        Some(target) => {
+            state::write_atomic(&target, text.as_bytes())?;
+            outln!("Report written to {}.", path_in(&cwd, &target).display());
+        }
+        None => out!("{text}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn logs(n: Option<u32>) -> Result<ExitCode> {
