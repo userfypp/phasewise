@@ -280,13 +280,11 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     app.page = content_height.max(1);
     let total = lines.len();
-    let max_scroll = u16::try_from(total)
-        .unwrap_or(u16::MAX)
-        .saturating_sub(content_height);
+    let max_scroll = total.saturating_sub(usize::from(content_height));
     app.scroll = app.scroll.min(max_scroll);
     let position = (total > usize::from(content_height) && content_height > 0).then(|| {
-        let first = usize::from(app.scroll) + 1;
-        let last = (usize::from(app.scroll) + usize::from(content_height)).min(total);
+        let first = app.scroll + 1;
+        let last = (app.scroll + usize::from(content_height)).min(total);
         format!("{first}–{last} of {total}")
     });
     head.push(tab_line(app.tab, position, width));
@@ -297,7 +295,14 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let [top, content] =
         Layout::vertical([Constraint::Length(head_height), Constraint::Min(0)]).areas(area);
     frame.render_widget(Paragraph::new(head), top);
-    frame.render_widget(Paragraph::new(lines).scroll((app.scroll, 0)), content);
+    // `Paragraph::scroll` takes a `u16`, which stops at 65,535 lines: cut the
+    // visible window out of the lines instead.
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .skip(app.scroll)
+        .take(usize::from(content_height))
+        .collect();
+    frame.render_widget(Paragraph::new(visible), content);
 }
 
 /// Text for the content pane. The terminal buffer cannot hold control
@@ -832,6 +837,25 @@ pub(super) mod tests {
         assert!(rows[n - 1].ends_with("? shortcuts"), "{rows:#?}");
         assert!(!rows[n - 1].contains('✓'), "{rows:#?}");
         insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn a_diff_of_more_than_65535_lines_reaches_its_last_line() {
+        let mut app = app();
+        app.diff = DiffView {
+            text: (1..=100_000).map(|i| format!("+line {i}\n")).collect(),
+            ..DiffView::default()
+        };
+        app.scroll = usize::MAX;
+        let text = format!("{}", render(&mut app, 100, 30).backend());
+        assert!(text.contains("+line 100000"), "{text}");
+        assert!(text.contains("of 100000"), "{text}");
+        assert!(app.scroll > usize::from(u16::MAX), "{}", app.scroll);
+        // A line in the middle past the old limit is reachable too.
+        app.scroll = 70_000;
+        let text = format!("{}", render(&mut app, 100, 30).backend());
+        assert!(text.contains("+line 70001"), "{text}");
+        assert!(text.contains("70001–"), "{text}");
     }
 
     #[test]
