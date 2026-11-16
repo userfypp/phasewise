@@ -929,10 +929,9 @@ fn check_budget(run: &Run, settings: &PhaseSettings, number: usize) -> Result<()
     let Some(limit) = settings.max_cost_usd else {
         return Ok(());
     };
-    let spent = run.state.cost_usd();
-    if spent >= limit {
+    if let Some((spent, limit)) = crate::engine::cost_limit_reached(run.state.cost_usd(), limit) {
         bail!(
-            "The run has spent ${spent:.2} of its ${limit:.2} limit (`max_cost_usd`), so \
+            "The run has spent ${spent} of its ${limit} limit (`max_cost_usd`), so \
 phase {number} was not started. Set {MAX_COST_ENV} to a higher amount and run it again, or \
 finish the remaining phases yourself."
         );
