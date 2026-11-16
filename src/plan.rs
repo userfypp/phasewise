@@ -250,6 +250,9 @@ fn key_line(text: &str, fm_first_line: usize, fm_lines: usize, key: &str) -> usi
 
 /// Parses plan text. Returns every problem found, sorted by line.
 pub fn parse(text: &str) -> Result<Plan, Vec<PlanError>> {
+    // Many Windows editors start a UTF-8 file with a byte order mark. It is
+    // not part of the first line, and dropping it leaves line numbers intact.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut errors = Vec::new();
     let mut config = PlanConfig::default();
     let mut body_start = 0;
@@ -947,6 +950,34 @@ mod tests {
         assert_eq!(plan.phases[0].body, "body");
         assert_eq!(plan.phases[0].verify, vec!["make"]);
         assert_eq!(plan.phases[0].line, 8);
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_front_matter() {
+        let text = "+++\nagent = \"codex\"\nmax_retries = 3\n+++\n# T\n\nctx\n\n## A\n\nbody\n\n```verify\nmake\n```\n";
+        let plain = ok(text);
+        let marked = ok(&format!("\u{feff}{text}"));
+        assert_eq!(marked.config.agent, AgentKind::Codex);
+        assert_eq!(marked.config.max_retries, 3);
+        assert_eq!(marked.title, plain.title);
+        assert_eq!(marked.context, plain.context);
+        assert_eq!(marked.phases[0].title, plain.phases[0].title);
+        assert_eq!(marked.phases[0].body, plain.phases[0].body);
+        assert_eq!(marked.phases[0].verify, plain.phases[0].verify);
+        assert_eq!(marked.phases[0].line, plain.phases[0].line);
+    }
+
+    #[test]
+    fn a_byte_order_mark_keeps_error_lines() {
+        let e = errs("\u{feff}+++\nfoo = 1\n+++\n## A\n\nbody\n");
+        assert_eq!(e[0].0, 2);
+    }
+
+    #[test]
+    fn a_byte_order_mark_without_front_matter_is_ignored() {
+        let plan = ok("\u{feff}# T\n\n## A\n\nbody\n");
+        assert_eq!(plan.title.as_deref(), Some("T"));
+        assert_eq!(plan.phases[0].line, 3);
     }
 
     #[test]
