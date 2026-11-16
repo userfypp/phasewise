@@ -789,6 +789,18 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_holding_pid_zero_or_an_impossible_pid_is_stale() {
+        for pid in ["0", "4294967295", "2147483648"] {
+            let (_dir, paths) = temp_paths();
+            fs::create_dir_all(paths.dir()).unwrap();
+            fs::write(paths.lock_file(), format!("{pid}\n")).unwrap();
+            let _guard = LockGuard::acquire(&paths)
+                .unwrap_or_else(|e| panic!("a lock holding {pid} must be taken over: {e}"));
+            assert_eq!(lock_holder(&paths), Some(std::process::id()), "{pid}");
+        }
+    }
+
+    #[test]
     fn empty_lock_is_refused() {
         let (_dir, paths) = temp_paths();
         fs::create_dir_all(paths.dir()).unwrap();

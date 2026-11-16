@@ -226,6 +226,36 @@ git switch main && git merge --squash phasewise/<run-id> && git commit
 ask with `merge` or `m`, and it never pushes or deletes branches. The run
 branch is kept: delete it yourself when you no longer need it.
 
+## Reporting a run
+
+`phasewise report` prints a Markdown summary of the current (or latest) run:
+the plan title, the run id and branches, a table with one row per phase (status,
+time, cost and changed files, `-` where unknown, plus the agent when the plan
+mixes agents), the plan's checks and the totals. It uses only what the run
+stored, so the same run gives the same text. The numbers are those of
+`phasewise status`. `--output report.md` writes the file instead (atomically);
+it refuses to overwrite an existing file unless you pass `--force`.
+
+```markdown
+# Add the report command
+
+Run `20260101-000000-abcd` on branch `phasewise/20260101-000000-abcd` (from `main`), agent: claude
+
+| # | Phase | Status | Time | Cost | Files |
+|--:|---|---|--:|--:|--:|
+| 1 | Parse the flags | done | 2m 05s | $0.5000 | 3 |
+| 2 | Print the report | awaiting review | 5s | - | 1 |
+
+## Checks
+
+- `cargo test`
+- Phase 2: `test -f report.md`
+
+## Totals
+
+1 of 2 phases done, 2m 10s, $0.50, 4 files changed
+```
+
 ## Models and effort
 
 `m` and `e` on the home screen, `--model` and `--effort` on `run`, `next`,
@@ -299,6 +329,7 @@ terminal UI.
 | `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set), the time the finished phases took, the last [usage limits](#usage-limits) Claude Code reported, and a table of phases: state, attempts, files, cost, time, model. A running phase shows the time so far; a phase that is retried or rolled back restarts its clock, so the time is that of its last attempt. `--json` prints the run as JSON for scripts (`null` when there is no run). |
 | `phasewise logs [N]` | Prints what happened in phase N (default: the last one that started): result, failure, the agent's summary and the paths of its logs. |
 | `phasewise diff [N]` | Prints the diff of phase N (default: the last one with a checkpoint). |
+| `phasewise report` | Prints a Markdown summary of the run for a pull request description (see [Reporting a run](#reporting-a-run)). `--output PATH` writes it to a file (an existing file is refused unless `--force`). |
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
 | `phasewise settings [set KEY VALUE \| reset [KEY]]` | Shows, changes or resets your [settings](#settings). |
@@ -382,7 +413,7 @@ Environment variables:
 | Variable | Effect |
 |---|---|
 | `PHASEWISE_CLAUDE_BIN`, `PHASEWISE_CODEX_BIN` | Use another binary for the agent. |
-| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase (1 to 31536000). |
+| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase, including a phase's own (1 to 31536000). |
 | `PHASEWISE_MAX_COST_USD` | Overrides `max_cost_usd` (the run's spending limit). |
 | `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200, 1 to 31536000). |
 | `NO_COLOR` | Turns off colour in command output and in the screens (bold and dim stay). |
@@ -419,7 +450,11 @@ plan · `a` agent · `m` model · `e` effort · `o` last run · `s` settings · 
 all keys · `q` quit. While a plan is being written: `esc` stops it.
 
 **Run screen**: `j`/`k` or arrows select a phase · `tab` next view ·
-`PgUp`/`PgDn` scroll · `n` approve · `r` retry · `b` roll back · `m` merge a
+`PgUp`/`PgDn` scroll the right panel by a page, `J`/`K` by a line, `h`/`l` or
+the left and right arrows by 8 columns, `g`/`G` or `Home`/`End` jump to its top
+or bottom (`G` on the log of a running phase follows it again), `/` searches it
+(case-insensitive; an empty search clears it) and `]`/`[` go to the next and
+previous match · `n` approve · `r` retry · `b` roll back · `m` merge a
 completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
 all keys · `q` quit.
 

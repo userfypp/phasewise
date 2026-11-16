@@ -15,8 +15,8 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use crate::agent::LaunchOptions;
 use crate::agent::{ModelInfo, agent_for};
 use crate::display::{
-    event_line, failure_kind_label, model_name, money, path_in, phase_count, phase_header,
-    phase_summary, plan_event_line, plan_header, status_label,
+    Report, ReportPhase, event_line, failure_kind_label, model_name, money, path_in, phase_count,
+    phase_header, phase_summary, plan_event_line, plan_header, report_markdown, status_label,
 };
 use crate::engine::{self, EngineEvent};
 use crate::git::Git;
@@ -24,7 +24,7 @@ use crate::ops::{self, NextOutcome, Overrides, PlanEvent, PlanRequest, PlanResul
 use crate::plan::{self, AgentKind};
 use crate::process;
 use crate::settings;
-use crate::state::{PhaseStatus, RunState, RunStatus};
+use crate::state::{self, PhaseStatus, RunState, RunStatus};
 use crate::style::{Role, Styler};
 
 // Output to stdout goes through these macros instead of `println!`/`print!`,
@@ -219,6 +219,19 @@ pub enum Command {
         n: Option<u32>,
     },
 
+    /// Print a Markdown summary of the run for a pull request description
+    #[command(
+        after_help = "Examples:\n  phasewise report\n  phasewise report --output report.md --force"
+    )]
+    Report {
+        /// Write the report to this file instead of printing it
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Overwrite the output file if it exists
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Open the review TUI
     #[command(after_help = "Examples:\n  phasewise review")]
     Review,
@@ -350,6 +363,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
         Some(Command::Status { json }) => status(json),
         Some(Command::Diff { n }) => diff(n),
         Some(Command::Logs { n }) => logs(n),
+        Some(Command::Report { output, force }) => report(output.as_deref(), force),
         Some(Command::Review) => crate::tui::run(&current_dir()?),
         Some(Command::Settings { action }) => settings_command(action),
         Some(Command::Abort) => abort_command(),
@@ -450,10 +464,12 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
             st.heading(&format!("{}. {}", phase.number, phase.title))
         );
         let agent = phase.agent.map(|a| a.to_string());
+        let timeout = phase.phase_timeout_minutes.map(|m| format!("{m} min"));
         let settings: Vec<String> = [
             ("agent", &agent),
             ("model", &phase.model),
             ("effort", &phase.effort),
+            ("timeout", &timeout),
         ]
         .into_iter()
         .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
@@ -597,12 +613,42 @@ fn init() -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("Cannot read the current directory")?;
     let git = Git::discover(&cwd)?;
     let path = git.root().join(PLAN_FILE);
-    if path.exists() {
-        outln!("{PLAN_FILE} already exists; left untouched.");
-    } else {
-        std::fs::write(&path, PLAN_TEMPLATE)
-            .with_context(|| format!("Cannot write {}", path.display()))?;
-        outln!("Created {}.", shown_path(&path).display());
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(&path, PLAN_TEMPLATE)
+                .with_context(|| format!("Cannot write {}", path.display()))?;
+            outln!("Created {}.", shown_path(&path).display());
+        }
+        Err(e) => {
+            return Err(anyhow!(
+                "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+            ));
+        }
+        Ok(meta) => match std::fs::metadata(&path) {
+            Ok(target) if target.is_file() => {
+                outln!("{PLAN_FILE} already exists; left untouched.");
+            }
+            Ok(target) if target.is_dir() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a directory, not a plan. Move it away and run `phasewise init` again."
+                ));
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is not a regular file. Move it away and run `phasewise init` again."
+                ));
+            }
+            Err(_) if meta.file_type().is_symlink() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a symbolic link that points nowhere. Remove or fix the link and run `phasewise init` again."
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+                ));
+            }
+        },
     }
     if git.ensure_excluded(".phasewise/")? {
         outln!("Added .phasewise/ to the git exclude file.");
@@ -892,10 +938,16 @@ fn rollback_command(k: usize, yes: bool) -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    // Counted before the rollback: phases that were already pending are not reset.
+    let later = run
+        .state
+        .phases
+        .iter()
+        .filter(|p| p.number > k && p.status != PhaseStatus::Pending)
+        .count();
     ops::rollback(&mut run, k, Some(&sha))?;
     announce_recovery(&run);
     outln!("Rolled back to {target} ({}).", short_sha(&sha));
-    let later = run.state.phases.iter().filter(|p| p.number > k).count();
     if later > 0 {
         outln!("{later} later phase(s) are pending again.");
     }
@@ -1181,6 +1233,15 @@ fn run_limits(run: &Run) -> Option<crate::state::RateLimits> {
     crate::state::RateLimits::load(run.git.root()).filter(|l| l.agent == run.state.agent)
 }
 
+/// Files a phase changed: between the checkpoint before it and its own.
+fn phase_files(run: &Run, number: usize) -> Option<usize> {
+    let state = &run.state;
+    let to = state.phase(number)?.checkpoint_sha.as_deref()?;
+    run.git
+        .changed_file_count(state.checkpoint(number - 1)?, to)
+        .ok()
+}
+
 fn status(json: bool) -> Result<ExitCode> {
     let Some(run) = ops::load_current(&current_dir()?)? else {
         if json {
@@ -1254,13 +1315,8 @@ fn status(json: bool) -> Result<ExitCode> {
         .phases
         .iter()
         .map(|p| {
-            let files = match (state.checkpoint(p.number - 1), p.checkpoint_sha.as_deref()) {
-                (Some(from), Some(to)) => run
-                    .git
-                    .changed_file_count(from, to)
-                    .map_or_else(|_| "-".to_string(), |n| n.to_string()),
-                _ => "-".to_string(),
-            };
+            let files =
+                phase_files(&run, p.number).map_or_else(|| "-".to_string(), |n| n.to_string());
             let cost = p
                 .cost_usd
                 .map_or_else(|| "-".to_string(), |c| format!("${c:.4}"));
@@ -1499,6 +1555,78 @@ fn existing_phase(state: &RunState, n: u32) -> Result<usize> {
         ));
     }
     Ok(n)
+}
+
+/// `phasewise report`: the run as Markdown, on stdout or in a file.
+fn report(output: Option<&Path>, force: bool) -> Result<ExitCode> {
+    let cwd = current_dir()?;
+    // Refuse an existing output before reading the run, as `plan` does.
+    let target = output.map(|path| cwd.join(path));
+    if let Some(target) = &target {
+        if target.exists() && !force {
+            return Err(anyhow!(
+                "{} already exists. Choose another path with `--output`, or pass `--force` to overwrite it.",
+                target.display()
+            ));
+        }
+        if target.is_dir() {
+            return Err(anyhow!(
+                "{} is a directory. Choose a file path with `--output`.",
+                target.display()
+            ));
+        }
+    }
+    let run = load_run()?;
+    let state = &run.state;
+    let now = jiff::Timestamp::now();
+    let phases = state
+        .phases
+        .iter()
+        .map(|p| {
+            let plan_phase = run.plan.phases.get(p.number - 1);
+            ReportPhase {
+                number: p.number,
+                title: p.title.clone(),
+                status: p.status,
+                agent: engine::phase_agent(state, &run.plan, p.number),
+                secs: p.duration_secs(now),
+                cost_usd: p.cost_usd,
+                files: phase_files(&run, p.number),
+                verify: plan_phase.map(|ph| ph.verify.clone()).unwrap_or_default(),
+            }
+        })
+        .collect();
+    let last_checkpoint = state
+        .phases
+        .iter()
+        .rev()
+        .find_map(|p| p.checkpoint_sha.as_deref());
+    let report = Report {
+        title: state.plan_title.clone(),
+        run_id: state.run_id.clone(),
+        run_branch: state.run_branch.clone(),
+        original_branch: state.original_branch.clone(),
+        agent: state.agent,
+        verify: run.plan.config.verify.clone(),
+        phases,
+        total_secs: state.duration_secs(),
+        total_cost: state
+            .phases
+            .iter()
+            .any(|p| p.cost_usd.is_some())
+            .then(|| state.cost_usd()),
+        total_files: last_checkpoint
+            .and_then(|to| run.git.changed_file_count(&state.base_sha, to).ok()),
+    };
+    let text = report_markdown(&report);
+    match target {
+        Some(target) => {
+            state::write_atomic(&target, text.as_bytes())?;
+            outln!("Report written to {}.", path_in(&cwd, &target).display());
+        }
+        None => out!("{text}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn logs(n: Option<u32>) -> Result<ExitCode> {

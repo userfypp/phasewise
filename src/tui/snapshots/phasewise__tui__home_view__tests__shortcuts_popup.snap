@@ -17,7 +17,7 @@ expression: render(&home).backend()
 " Model   sonnet · from │                                                   │                        "
 " Effort  Default · Clau│ Settings                                          │                        "
 "                       │ a           switch the agent (resets the model)   │                        "
-" any key close         │ m           choose the model                      │                        "
+" j/k scroll            │ m           choose the model                      │                        "
 "                       │ e           choose the effort                     │                        "
 "                       │                                                   │                        "
 "                       │ General                                           │                        "

@@ -54,7 +54,7 @@ check runs as a child process in its own process group.
 | `git.rs` | The only module that runs git. |
 | `state.rs` | `state.json`, the `.phasewise` layout, atomic writes, the run lock and recovery. |
 | `process.rs` | Process groups, termination, signals, the panic hook, the closed-terminal watch. |
-| `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths. |
+| `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths, and the Markdown of `phasewise report` (`report_markdown`, pure). |
 | `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset, `TERM` not `dumb` and the `color` setting not `never`. The TUI follows the same rule: when colour is off, `widgets::strip_color` clears every colour of a drawn frame and turns the dim grey into the dim attribute. |
 | `settings.rs` | User settings: the registry (one table entry per setting), `settings.toml` in the user's configuration directory, validation, atomic save, the bell decision. |
 | `doctor.rs` | `phasewise doctor`. |

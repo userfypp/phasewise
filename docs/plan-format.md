@@ -26,7 +26,7 @@ Every key is optional.
 | `agent` | string | `"claude"` | Agent that runs the phases: `"claude"` or `"codex"`. |
 | `verify` | array of strings | `[]` | Commands run after every phase. |
 | `max_retries` | integer >= 0 | `1` | Automatic retries when verification fails. |
-| `phase_timeout_minutes` | integer, 1 to 525600 | `60` | Time limit for the agent in one phase. |
+| `phase_timeout_minutes` | integer, 1 to 525600 | `60` | Time limit for the agent in one phase; a phase's settings block can override it. |
 | `verify_timeout_seconds` | integer, 1 to 31536000 | `600` | Time limit for each verification command. |
 | `max_cost_usd` | number > 0 | unset | Spending limit for the whole run, in US dollars; see [Spending limit](#spending-limit). |
 | `agent_args` | array of strings | `[]` | Extra arguments for the agent command line. |
@@ -101,8 +101,11 @@ effort = "high"
 Refactor the parser.
 ````
 
-The block is TOML with only the keys `agent`, `model` and `effort`, all optional
-(`agent` is described in [Agent per phase](#agent-per-phase)). It is
+The block is TOML with only the keys `agent`, `model`, `effort` and
+`phase_timeout_minutes`, all optional (`agent` is described in
+[Agent per phase](#agent-per-phase)). `phase_timeout_minutes` (integer, 1 to
+525600, like the front matter key) sets the agent's time limit for that phase
+only; `PHASEWISE_PHASE_TIMEOUT_SECONDS` still overrides it. It is
 removed from the text the agent receives, like `verify` blocks. A phase can have
 one block, and it must come after a phase heading.
 
@@ -165,7 +168,7 @@ line, and exits with code 1:
 - front matter that is not closed (line 1);
 - unknown key (named in the message), invalid TOML or wrong value type;
 - unknown `agent`, in the front matter or in a phase block (the valid values are listed);
-- `phase_timeout_minutes` or `verify_timeout_seconds` below 1 or above a year, or `max_cost_usd` not above 0;
+- `phase_timeout_minutes` (in the front matter or a phase block) or `verify_timeout_seconds` below 1 or above a year, or `max_cost_usd` not above 0;
 - a plan with no phases;
 - a phase with an empty title or an empty body;
 - duplicate phase titles (reported at the second one, with the first one's line);

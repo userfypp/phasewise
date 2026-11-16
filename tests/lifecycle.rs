@@ -110,6 +110,43 @@ impl Env {
 }
 
 #[test]
+fn report_summarizes_the_run_on_stdout_and_in_a_file() {
+    let env = Env::new();
+    assert_eq!(env.exec(&["report"], &[]).code, 1, "no run yet");
+    env.ok(&["run"], &[]);
+    env.ok(&["next"], &[]);
+
+    let out = env.ok(&["report"], &[]);
+    let id = env.run_id();
+    let text = &out.stdout;
+    assert!(text.starts_with("# Demo plan\n\n"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "Run `{id}` on branch `phasewise/{id}` (from `main`)"
+        )),
+        "{text}"
+    );
+    assert!(text.contains("| # | Phase | Status | Time | Cost | Files |"));
+    assert!(text.contains("| 1 | First | done |"), "{text}");
+    assert!(text.contains("| 2 | Second | awaiting review |"), "{text}");
+    assert!(
+        text.contains("| 3 | Third | pending | - | - | - |"),
+        "{text}"
+    );
+    assert!(text.contains("- `! grep -q broken phase-*.txt`"), "{text}");
+    assert!(text.contains("1 of 3 phases done"), "{text}");
+
+    let written = env.ok(&["report", "--output", "report.md"], &[]);
+    assert!(written.stdout.contains("Report written to report.md"));
+    assert_eq!(env.repo.read("report.md"), *text);
+
+    let again = env.exec(&["report", "--output", "report.md"], &[]);
+    assert_eq!(again.code, 1, "{}", again.stdout);
+    assert!(again.stderr.contains("already exists"), "{}", again.stderr);
+    env.ok(&["report", "--output", "report.md", "--force"], &[]);
+}
+
+#[test]
 fn retry_with_note_after_verify_failure_starts_a_clean_session() {
     let env = Env::new();
     let out = env.exec(&["run"], &[("FAKE_MODE_1", "broken_once")]);
@@ -224,6 +261,30 @@ fn rollback_returns_to_a_checkpoint_and_next_reruns_the_phase() {
     assert!(env.exists("phase-2.txt"));
     assert_eq!(env.state()["phases"][1]["attempts"], 2);
     env.check_invariants();
+}
+
+#[test]
+fn rollback_does_not_report_phases_that_were_already_pending() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+    let out = env.ok(&["rollback", "1", "--yes"], &[]);
+    assert!(!out.stdout.contains("pending again"), "{}", out.stdout);
+    assert!(out.stdout.contains("phasewise next"), "{}", out.stdout);
+}
+
+#[test]
+fn rollback_counts_only_the_phases_it_reset() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    env.ok(&["next"], &[]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+    let out = env.ok(&["rollback", "1", "--yes"], &[]);
+    assert!(
+        out.stdout.contains("1 later phase(s) are pending again."),
+        "{}",
+        out.stdout
+    );
 }
 
 #[test]
