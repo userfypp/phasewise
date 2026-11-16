@@ -464,10 +464,12 @@ fn print_plan(plan: &plan::Plan, path: &Path) {
             st.heading(&format!("{}. {}", phase.number, phase.title))
         );
         let agent = phase.agent.map(|a| a.to_string());
+        let timeout = phase.phase_timeout_minutes.map(|m| format!("{m} min"));
         let settings: Vec<String> = [
             ("agent", &agent),
             ("model", &phase.model),
             ("effort", &phase.effort),
+            ("timeout", &timeout),
         ]
         .into_iter()
         .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
@@ -611,12 +613,42 @@ fn init() -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("Cannot read the current directory")?;
     let git = Git::discover(&cwd)?;
     let path = git.root().join(PLAN_FILE);
-    if path.exists() {
-        outln!("{PLAN_FILE} already exists; left untouched.");
-    } else {
-        std::fs::write(&path, PLAN_TEMPLATE)
-            .with_context(|| format!("Cannot write {}", path.display()))?;
-        outln!("Created {}.", shown_path(&path).display());
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(&path, PLAN_TEMPLATE)
+                .with_context(|| format!("Cannot write {}", path.display()))?;
+            outln!("Created {}.", shown_path(&path).display());
+        }
+        Err(e) => {
+            return Err(anyhow!(
+                "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+            ));
+        }
+        Ok(meta) => match std::fs::metadata(&path) {
+            Ok(target) if target.is_file() => {
+                outln!("{PLAN_FILE} already exists; left untouched.");
+            }
+            Ok(target) if target.is_dir() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a directory, not a plan. Move it away and run `phasewise init` again."
+                ));
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is not a regular file. Move it away and run `phasewise init` again."
+                ));
+            }
+            Err(_) if meta.file_type().is_symlink() => {
+                return Err(anyhow!(
+                    "{PLAN_FILE} is a symbolic link that points nowhere. Remove or fix the link and run `phasewise init` again."
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Cannot inspect {PLAN_FILE}: {e}. Check its permissions and try again."
+                ));
+            }
+        },
     }
     if git.ensure_excluded(".phasewise/")? {
         outln!("Added .phasewise/ to the git exclude file.");
@@ -906,10 +938,16 @@ fn rollback_command(k: usize, yes: bool) -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    // Counted before the rollback: phases that were already pending are not reset.
+    let later = run
+        .state
+        .phases
+        .iter()
+        .filter(|p| p.number > k && p.status != PhaseStatus::Pending)
+        .count();
     ops::rollback(&mut run, k, Some(&sha))?;
     announce_recovery(&run);
     outln!("Rolled back to {target} ({}).", short_sha(&sha));
-    let later = run.state.phases.iter().filter(|p| p.number > k).count();
     if later > 0 {
         outln!("{later} later phase(s) are pending again.");
     }

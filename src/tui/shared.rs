@@ -99,6 +99,31 @@ pub fn digit_row(key: KeyEvent) -> Option<usize> {
     }
 }
 
+/// Lines of a `?` popup that stay out of sight on the smallest screen the TUI
+/// draws (the title, a blank line, the borders and the "more" row).
+const HELP_SMALLEST_SCREEN_CHROME: usize = 5;
+
+/// The furthest the `?` popup can need to scroll: its lines minus what the
+/// smallest screen shows.
+pub fn help_scroll_max(groups: &ShortcutGroups) -> usize {
+    let lines = groups.iter().map(|(_, rows)| rows.len() + 2).sum::<usize>();
+    lines.saturating_sub(usize::from(super::widgets::MIN_HEIGHT) - HELP_SMALLEST_SCREEN_CHROME)
+}
+
+/// What a key does in the `?` popup: `j`/`k`, the arrows and PgUp/PgDn scroll
+/// it (within `0..=max`); any other key closes it. True when it closes.
+pub fn help_key(scroll: &mut usize, max: usize, key: KeyEvent) -> bool {
+    let target = match key.code {
+        KeyCode::Down | KeyCode::Char('j') => scroll.saturating_add(1),
+        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+        KeyCode::PageDown => scroll.saturating_add(5),
+        KeyCode::PageUp => scroll.saturating_sub(5),
+        _ => return true,
+    };
+    *scroll = target.min(max);
+    false
+}
+
 /// Applies a text-editing key to `buffer`: characters, Backspace, Ctrl-U
 /// (clear) and Ctrl-W (delete the last word). False for any other key.
 pub fn edit_text(buffer: &mut String, key: KeyEvent) -> bool {

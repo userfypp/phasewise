@@ -5,12 +5,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::data::{DiffView, LogLine, RunView};
 use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
-    confirm_key, edit_text, item, picker_footer,
+    confirm_key, edit_text, help_key, help_scroll_max, item, picker_footer,
 };
 use crate::settings::Settings;
 use crate::state::PhaseStatus;
 
 const DEFAULT_PAGE: u16 = 10;
+/// Columns the right panel moves per `h` / `l`.
+const HSCROLL_STEP: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -51,6 +53,8 @@ pub enum Mode {
     ConfirmMerge(usize),
     /// Optional note for a retry, being typed.
     Note(String),
+    /// Text to look for in the right panel, being typed.
+    Search(String),
     /// Popup listing every key.
     Help,
     /// The user settings menu.
@@ -86,6 +90,13 @@ pub struct App {
     /// First visible line of the right panel (a `usize`: a diff can have more
     /// than 65,535 lines).
     pub scroll: usize,
+    /// First visible column of the right panel (the view clamps it).
+    pub hscroll: usize,
+    /// The query of the last search, for `]` and `[`.
+    pub search: Option<String>,
+    /// Line of the last search jump: the view may clamp `scroll` below it near
+    /// the end of the panel, and the next jump must still go on from it.
+    found: Option<usize>,
     /// Content height of the right panel; set by the view on every draw.
     pub page: u16,
     pub mode: Mode,
@@ -96,6 +107,8 @@ pub struct App {
     pub worker_busy: bool,
     /// The home screen is planning (set by the loop, for the quit question).
     pub planning_busy: bool,
+    /// First line of the `?` popup shown when it does not fit the screen.
+    pub help_scroll: usize,
     /// Spinner frame, set by the loop from the elapsed time.
     pub frame: usize,
     pub message: Option<Notice>,
@@ -124,11 +137,15 @@ impl App {
             selected,
             tab: Tab::Diff,
             scroll: 0,
+            hscroll: 0,
+            search: None,
+            found: None,
             page: DEFAULT_PAGE,
             mode: Mode::Normal,
             running: None,
             worker_busy: false,
             planning_busy: false,
+            help_scroll: 0,
             frame: 0,
             message: None,
             settings: Settings::default(),
@@ -156,8 +173,15 @@ impl App {
             && index != self.selected
         {
             self.selected = index;
-            self.scroll = 0;
+            self.reset_panel();
         }
+    }
+
+    /// Back to the top left of the right panel.
+    fn reset_panel(&mut self) {
+        self.scroll = 0;
+        self.hscroll = 0;
+        self.found = None;
     }
 
     pub fn set_caches(&mut self, diff: DiffView, log: Vec<LogLine>, verify: String) {
@@ -198,9 +222,13 @@ impl App {
             }
             Mode::ConfirmMerge(row) => self.confirm(key, row, Mode::ConfirmMerge, Command::Merge),
             Mode::Note(buffer) => self.key_note(key, buffer),
+            Mode::Search(buffer) => self.key_search(key, buffer),
             Mode::Help => {
-                // Any key closes the help; `?` is the one that opened it.
-                self.mode = Mode::Normal;
+                // Scrolling keys move the popup; any other key closes it.
+                let max = help_scroll_max(&App::shortcuts());
+                if help_key(&mut self.help_scroll, max, key) {
+                    self.mode = Mode::Normal;
+                }
                 None
             }
             Mode::Settings(panel) => self.key_settings(key, panel),
@@ -266,6 +294,82 @@ impl App {
         None
     }
 
+    fn key_search(&mut self, key: KeyEvent, mut buffer: String) -> Option<Command> {
+        match key.code {
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                if buffer.is_empty() {
+                    self.search = None;
+                } else {
+                    self.search = Some(buffer);
+                    self.find(true);
+                }
+            }
+            KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {
+                if edit_text(&mut buffer, key) {
+                    self.mode = Mode::Search(buffer);
+                }
+            }
+        }
+        None
+    }
+
+    /// Jumps to the next (or previous) line of the right panel that contains
+    /// the stored query, wrapping around; the match becomes the first line.
+    fn find(&mut self, forward: bool) {
+        let Some(query) = self.search.clone() else {
+            self.message = Some(Notice::warn("Press / to search."));
+            return;
+        };
+        let needle = query.to_lowercase();
+        let texts: Vec<String> = super::view::panel_lines(self)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    .to_lowercase()
+            })
+            .collect();
+        let total = texts.len();
+        let last = total.saturating_sub(1);
+        let top = self.scroll.min(last);
+        let base = match self.found {
+            Some(at) if self.scroll == at.min(total.saturating_sub(usize::from(self.page))) => at,
+            _ => top,
+        };
+        let hit = (1..=total)
+            .map(|step| {
+                if forward {
+                    (base + step) % total
+                } else {
+                    (base + total - step % total) % total
+                }
+            })
+            .find(|&i| texts[i].contains(&needle));
+        match hit {
+            Some(line) => {
+                self.scroll = line;
+                self.found = Some(line);
+            }
+            None => self.message = Some(Notice::warn(format!("No match for \"{query}\"."))),
+        }
+    }
+
+    /// Scrolls the right panel by one line.
+    fn scroll_line(&mut self, down: bool) {
+        let total = super::view::panel_lines(self).len();
+        let max = total.saturating_sub(usize::from(self.page));
+        let scroll = self.scroll.min(max);
+        self.scroll = if down {
+            (scroll + 1).min(max)
+        } else {
+            scroll.saturating_sub(1)
+        };
+    }
+
     fn key_normal(&mut self, key: KeyEvent) -> Option<Command> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -275,6 +379,7 @@ impl App {
             KeyCode::Char('A') => self.abandon(),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                self.help_scroll = 0;
                 None
             }
             KeyCode::Char('s') => {
@@ -285,7 +390,44 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.select(-1),
             KeyCode::Tab => {
                 self.tab = self.tab.next();
+                self.reset_panel();
+                None
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
                 self.scroll = 0;
+                None
+            }
+            // The view clamps the scroll to the end of the content.
+            KeyCode::Char('G') | KeyCode::End => {
+                self.scroll = usize::MAX;
+                None
+            }
+            KeyCode::Char('J') => {
+                self.scroll_line(true);
+                None
+            }
+            KeyCode::Char('K') => {
+                self.scroll_line(false);
+                None
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.hscroll = self.hscroll.saturating_add(HSCROLL_STEP);
+                None
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.hscroll = self.hscroll.saturating_sub(HSCROLL_STEP);
+                None
+            }
+            KeyCode::Char('/') => {
+                self.mode = Mode::Search(String::new());
+                None
+            }
+            KeyCode::Char(']') => {
+                self.find(true);
+                None
+            }
+            KeyCode::Char('[') => {
+                self.find(false);
                 None
             }
             KeyCode::PageUp => {
@@ -366,7 +508,7 @@ impl App {
             return None;
         }
         self.selected = target;
-        self.scroll = 0;
+        self.reset_panel();
         Some(Command::Reload)
     }
 
@@ -461,7 +603,8 @@ impl App {
             | Mode::ConfirmAbandon(_)
             | Mode::ConfirmMerge(_) => return picker_footer(2),
             Mode::Note(_) => return vec![item("enter", "retry"), item("esc", "cancel")],
-            Mode::Help => return vec![item("any key", "close")],
+            Mode::Search(_) => return vec![item("enter", "search"), item("esc", "cancel")],
+            Mode::Help => return vec![item("j/k", "scroll")],
             Mode::Normal => {}
         }
         let tail = [
@@ -499,7 +642,6 @@ impl App {
                 vec![
                     ("j / k", "select the next or previous phase"),
                     ("tab", "switch between Diff, Log and Verify"),
-                    ("PgUp / PgDn", "scroll the right panel"),
                 ],
             ),
             (
@@ -520,6 +662,17 @@ impl App {
                     ("?", "show or hide the shortcuts"),
                     SETTINGS_SHORTCUT,
                     ("q / Ctrl-C", "quit"),
+                ],
+            ),
+            (
+                "Right panel",
+                vec![
+                    ("PgUp / PgDn", "scroll by a page"),
+                    ("J / K", "scroll by a line"),
+                    ("g / G", "jump to the top or the bottom (Home / End)"),
+                    ("h / l", "scroll sideways (left / right arrows)"),
+                    ("/", "search the panel, case-insensitive"),
+                    ("] / [", "go to the next or previous match"),
                 ],
             ),
         ]
@@ -848,7 +1001,7 @@ mod tests {
         confirm.mode = Mode::ConfirmQuit(0);
         assert_eq!(keys(&confirm), ["enter", "1–2", "esc"]);
         confirm.mode = Mode::Help;
-        assert_eq!(keys(&confirm), ["any key"]);
+        assert_eq!(keys(&confirm), ["j/k"]);
         assert!(keys(&a).iter().all(|k| k != "?"));
     }
 
@@ -860,7 +1013,7 @@ mod tests {
             .flat_map(|(_, rows)| rows.iter().map(|(k, _)| *k))
             .collect();
         assert!(all.contains(&"A") && all.contains(&"esc"));
-        assert_eq!(groups.len(), 3);
+        assert_eq!(groups.len(), 4);
     }
 
     #[test]
@@ -1071,5 +1224,192 @@ mod tests {
                 .flat_map(|(_, rows)| rows)
                 .any(|(k, _)| *k == "s")
         );
+    }
+
+    /// A Verify tab of 30 lines, `line 00` .. `line 29`, a page of 5.
+    fn panel() -> App {
+        let mut a = reviewing();
+        a.tab = Tab::Verify;
+        a.verify = (0..30).map(|i| format!("line {i:02}\n")).collect();
+        a.page = 5;
+        a
+    }
+
+    fn type_search(a: &mut App, text: &str) {
+        a.handle_key(key('/'));
+        for c in text.chars() {
+            a.handle_key(key(c));
+        }
+        a.handle_key(code(KeyCode::Enter));
+    }
+
+    #[test]
+    fn g_and_home_go_to_the_top_and_capital_g_and_end_to_the_bottom() {
+        let mut a = panel();
+        a.scroll = 7;
+        a.handle_key(key('g'));
+        assert_eq!(a.scroll, 0);
+        a.scroll = 7;
+        a.handle_key(code(KeyCode::Home));
+        assert_eq!(a.scroll, 0);
+        a.handle_key(key('G'));
+        assert_eq!(a.scroll, usize::MAX);
+        a.scroll = 0;
+        a.handle_key(code(KeyCode::End));
+        assert_eq!(a.scroll, usize::MAX);
+    }
+
+    #[test]
+    fn capital_j_and_k_scroll_one_line_within_the_content() {
+        let mut a = panel();
+        a.handle_key(key('J'));
+        a.handle_key(key('J'));
+        assert_eq!(a.scroll, 2);
+        a.handle_key(key('K'));
+        assert_eq!(a.scroll, 1);
+        a.scroll = 0;
+        a.handle_key(key('K'));
+        assert_eq!(a.scroll, 0);
+        // From the bottom (`G`) one line up is relative to the real end.
+        a.handle_key(key('G'));
+        a.handle_key(key('J'));
+        assert_eq!(a.scroll, 25);
+        a.handle_key(key('K'));
+        assert_eq!(a.scroll, 24);
+        assert_eq!(a.selected, 1, "lowercase j/k still select phases");
+    }
+
+    #[test]
+    fn h_l_and_the_arrows_scroll_8_columns_sideways() {
+        let mut a = panel();
+        a.handle_key(key('l'));
+        assert_eq!(a.hscroll, 8);
+        a.handle_key(code(KeyCode::Right));
+        assert_eq!(a.hscroll, 16);
+        a.handle_key(key('h'));
+        assert_eq!(a.hscroll, 8);
+        a.handle_key(code(KeyCode::Left));
+        a.handle_key(code(KeyCode::Left));
+        assert_eq!(a.hscroll, 0);
+    }
+
+    #[test]
+    fn the_scroll_resets_with_the_tab_and_the_selected_phase() {
+        let mut a = panel();
+        a.scroll = 9;
+        a.hscroll = 16;
+        a.handle_key(code(KeyCode::Tab));
+        assert_eq!((a.scroll, a.hscroll), (0, 0));
+        a.scroll = 9;
+        a.hscroll = 16;
+        a.handle_key(key('j'));
+        assert_eq!((a.scroll, a.hscroll), (0, 0));
+    }
+
+    #[test]
+    fn slash_opens_the_search_and_esc_cancels_it() {
+        let mut a = panel();
+        a.handle_key(key('/'));
+        assert_eq!(a.mode, Mode::Search(String::new()));
+        a.handle_key(key('l'));
+        a.handle_key(key('x'));
+        a.handle_key(code(KeyCode::Backspace));
+        assert_eq!(a.mode, Mode::Search("l".into()));
+        assert_eq!(
+            a.footer(),
+            vec![item("enter", "search"), item("esc", "cancel")]
+        );
+        a.handle_key(code(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(a.search, None);
+        assert_eq!(a.scroll, 0);
+    }
+
+    #[test]
+    fn enter_jumps_to_the_next_match_ignoring_case() {
+        let mut a = panel();
+        type_search(&mut a, "LINE 07");
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(a.search.as_deref(), Some("LINE 07"));
+        assert_eq!(a.scroll, 7);
+        // The search starts after the top line and wraps around.
+        type_search(&mut a, "line 03");
+        assert_eq!(a.scroll, 3);
+    }
+
+    #[test]
+    fn a_search_without_a_match_warns_and_an_empty_one_clears_it() {
+        let mut a = panel();
+        a.scroll = 4;
+        type_search(&mut a, "zzz");
+        let notice = a.message.clone().expect("a notice");
+        assert_eq!(notice.level, Level::Warn);
+        assert_eq!(notice.text, "No match for \"zzz\".");
+        assert_eq!(a.scroll, 4);
+        type_search(&mut a, "");
+        assert_eq!(a.search, None);
+    }
+
+    #[test]
+    fn brackets_go_to_the_next_and_previous_match_and_wrap() {
+        let mut a = panel();
+        type_search(&mut a, "line 1");
+        assert_eq!(a.scroll, 10);
+        a.handle_key(key(']'));
+        assert_eq!(a.scroll, 11);
+        for _ in 0..8 {
+            a.handle_key(key(']'));
+        }
+        assert_eq!(a.scroll, 19);
+        a.handle_key(key(']'));
+        assert_eq!(a.scroll, 10, "wraps to the first match");
+        a.handle_key(key('['));
+        assert_eq!(a.scroll, 19, "wraps to the last match");
+        a.handle_key(key('['));
+        assert_eq!(a.scroll, 18);
+    }
+
+    #[test]
+    fn brackets_without_a_query_say_how_to_search() {
+        let mut a = panel();
+        a.handle_key(key(']'));
+        assert_eq!(
+            a.message.as_ref().map(|n| n.text.as_str()),
+            Some("Press / to search.")
+        );
+        a.handle_key(key('['));
+        assert_eq!(a.message.as_ref().map(|n| n.level), Some(Level::Warn));
+        assert_eq!(a.scroll, 0);
+    }
+
+    #[test]
+    fn n_still_approves_and_does_not_search_next() {
+        let mut a = panel();
+        type_search(&mut a, "line 1");
+        assert_eq!(a.handle_key(key('n')), Some(Command::Next));
+    }
+
+    #[test]
+    fn the_help_scrolls_with_j_k_and_pages_and_any_other_key_closes_it() {
+        let mut a = reviewing();
+        a.handle_key(key('?'));
+        assert_eq!(a.mode, Mode::Help);
+        a.handle_key(key('j'));
+        a.handle_key(code(KeyCode::Down));
+        assert_eq!((a.mode.clone(), a.help_scroll), (Mode::Help, 2));
+        a.handle_key(code(KeyCode::PageDown));
+        assert_eq!(a.help_scroll, 7);
+        a.handle_key(key('k'));
+        a.handle_key(code(KeyCode::PageUp));
+        assert_eq!((a.mode.clone(), a.help_scroll), (Mode::Help, 1));
+        for _ in 0..100 {
+            a.handle_key(code(KeyCode::PageDown));
+        }
+        assert_eq!(a.help_scroll, help_scroll_max(&App::shortcuts()));
+        a.handle_key(code(KeyCode::Char('x')));
+        assert_eq!(a.mode, Mode::Normal);
+        // Opening it again starts at the top.
+        a.handle_key(key('?'));
+        assert_eq!(a.help_scroll, 0);
     }
 }
