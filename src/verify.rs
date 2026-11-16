@@ -14,6 +14,8 @@ use anyhow::{Context, Result};
 use crate::process::spawn_in_group;
 
 const TAIL_LINES: usize = 200;
+/// Most bytes of a check's output read back for the retry prompt.
+const TAIL_WINDOW: u64 = 64 * 1024;
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const LEFTOVER_GRACE: Duration = Duration::from_millis(200);
 const POLL: Duration = Duration::from_millis(20);
@@ -176,14 +178,30 @@ fn end_the_line(log: &mut File, log_path: &Path, start: u64) -> Result<()> {
 
 /// Last `TAIL_LINES` lines of the log between two byte offsets. The trailer
 /// line written by phasewise itself (`exit code: N` / `timed out after N s`)
-/// is dropped, so only the command's own output remains.
+/// is dropped, so only the command's own output remains. At most the last
+/// `TAIL_WINDOW` bytes of the slice are read, however much the check printed.
 fn read_tail(log_path: &Path, start: u64, end: u64) -> Result<String> {
+    let from = start.max(end.saturating_sub(TAIL_WINDOW));
     let mut file = File::open(log_path)?;
-    file.seek(SeekFrom::Start(start))?;
+    file.seek(SeekFrom::Start(from))?;
     let mut bytes = Vec::new();
-    file.take(end.saturating_sub(start))
+    file.take(end.saturating_sub(from))
         .read_to_end(&mut bytes)?;
-    let text = String::from_utf8_lossy(&bytes);
+    // The window may begin in the middle of a line (or of a character): drop
+    // that partial line, unless nothing else is left (one very long line).
+    let mut body = bytes.as_slice();
+    if from > start
+        && let Some(i) = body.iter().position(|&b| b == b'\n')
+        && !tail_lines(&String::from_utf8_lossy(&body[i + 1..])).is_empty()
+    {
+        body = &body[i + 1..];
+    }
+    let text = String::from_utf8_lossy(body);
+    Ok(tail_lines(&text).join("\n"))
+}
+
+/// The last `TAIL_LINES` lines of `text` without phasewise's own trailer line.
+fn tail_lines(text: &str) -> Vec<&str> {
     let mut lines: Vec<&str> = text.lines().collect();
     if lines
         .last()
@@ -192,7 +210,7 @@ fn read_tail(log_path: &Path, start: u64, end: u64) -> Result<String> {
         lines.pop();
     }
     let skip = lines.len().saturating_sub(TAIL_LINES);
-    Ok(lines[skip..].join("\n"))
+    lines.split_off(skip)
 }
 
 #[cfg(test)]
@@ -223,6 +241,66 @@ mod tests {
         .expect("run_all");
         let text = std::fs::read_to_string(&log).expect("log");
         (outcome, events, text, dir)
+    }
+
+    fn tail_of(content: &[u8], start: usize) -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("verify.log");
+        std::fs::write(&log, content).expect("write");
+        read_tail(&log, start as u64, content.len() as u64).expect("read_tail")
+    }
+
+    #[test]
+    fn tail_of_small_output_is_unchanged() {
+        assert_eq!(tail_of(b"one\ntwo\nexit code: 1\n", 0), "one\ntwo");
+    }
+
+    #[test]
+    fn tail_of_large_output_is_the_last_lines() {
+        let mut content = vec![b'x'; 1024 * 1024];
+        content.push(b'\n');
+        let mut n = 0;
+        while content.len() < 5 * 1024 * 1024 {
+            content.extend_from_slice(format!("line {n}\n").as_bytes());
+            n += 1;
+        }
+        content.extend_from_slice(b"exit code: 1\n");
+        let expected: Vec<String> = (n - TAIL_LINES..n).map(|i| format!("line {i}")).collect();
+        assert_eq!(tail_of(&content, 0), expected.join("\n"));
+    }
+
+    #[test]
+    fn tail_reads_only_a_bounded_window() {
+        // The garbage before the window is never read: it would not decode.
+        let mut content = vec![0xffu8; 2 * 1024 * 1024];
+        content.extend_from_slice(b"\nlast\nexit code: 0\n");
+        assert_eq!(tail_of(&content, 0), "last");
+    }
+
+    #[test]
+    fn tail_of_one_long_line_is_bounded() {
+        let mut content = vec![b'a'; 1024 * 1024];
+        content.extend_from_slice(b"\nexit code: 0\n");
+        // The window holds the end of the line and the trailer: the end of
+        // the line is kept, bounded, rather than nothing at all.
+        let out = tail_of(&content, 0);
+        assert_eq!(
+            out.len() as u64,
+            TAIL_WINDOW - "\nexit code: 0\n".len() as u64
+        );
+        assert!(out.bytes().all(|b| b == b'a'));
+        // Without a trailing newline the window itself is returned, bounded.
+        let out = tail_of(&vec![b'a'; 1024 * 1024], 0);
+        assert_eq!(out.len() as u64, TAIL_WINDOW);
+    }
+
+    #[test]
+    fn tail_cut_inside_a_multibyte_character() {
+        let mut content = "é".repeat(100_000).into_bytes();
+        content.extend_from_slice(b"\nend\nexit code: 0\n");
+        assert_eq!(tail_of(&content, 0), "end");
+        let out = tail_of(&"é".repeat(100_000).into_bytes(), 0);
+        assert!(out.len() as u64 <= 2 * TAIL_WINDOW);
     }
 
     #[test]
