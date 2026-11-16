@@ -313,6 +313,8 @@ pub struct Popup {
     pub description: Option<String>,
     pub body: Vec<Line<'static>>,
     pub max_width: u16,
+    /// First body line shown when the body does not fit the screen.
+    pub scroll: usize,
 }
 
 impl Popup {
@@ -322,6 +324,7 @@ impl Popup {
             description: None,
             body: Vec::new(),
             max_width: POPUP_WIDTH,
+            scroll: 0,
         }
     }
 
@@ -332,6 +335,11 @@ impl Popup {
 
     pub fn body(mut self, lines: Vec<Line<'static>>) -> Popup {
         self.body = lines;
+        self
+    }
+
+    pub fn scroll(mut self, scroll: usize) -> Popup {
+        self.scroll = scroll;
         self
     }
 
@@ -352,24 +360,40 @@ pub fn render_popup(frame: &mut Frame, area: Rect, popup: &Popup) {
         .max(widest_body)
         .max(description_width)
         .min(room);
-    let mut lines = vec![popup.title.clone()];
+    let mut head = vec![popup.title.clone()];
     if let Some(description) = &popup.description {
-        lines.extend(
+        head.extend(
             wrap_text(description, inner)
                 .into_iter()
                 .map(|l| Line::styled(l, dim())),
         );
     }
     if !popup.body.is_empty() {
-        lines.push(Line::raw(""));
-        lines.extend(popup.body.iter().cloned());
+        head.push(Line::raw(""));
+    }
+    let height = u16::try_from(head.len() + popup.body.len() + 2)
+        .unwrap_or(area.height)
+        .min(area.height);
+    // On a short screen the body scrolls under the title; its last row says
+    // that there is more above or below.
+    let rows = usize::from(height).saturating_sub(2 + head.len());
+    let mut lines = head;
+    if popup.body.len() > rows && rows >= 2 {
+        let shown = rows - 1;
+        let offset = popup.scroll.min(popup.body.len() - shown);
+        lines.extend(popup.body[offset..offset + shown].iter().cloned());
+        let more = match (offset > 0, offset + shown < popup.body.len()) {
+            (true, true) => "↑↓ more",
+            (true, false) => "↑ more",
+            _ => "↓ more",
+        };
+        lines.push(Line::styled(more, dim()));
+    } else {
+        lines.extend(popup.body.iter().take(rows).cloned());
     }
     let width = u16::try_from(inner + 4)
         .unwrap_or(area.width)
         .min(area.width);
-    let height = u16::try_from(lines.len() + 2)
-        .unwrap_or(area.height)
-        .min(area.height);
     let x = area.x + (area.width - width) / 2;
     let y = (area.y + area.height / 4).min(area.bottom().saturating_sub(height));
     let rect = Rect::new(x, y, width, height);

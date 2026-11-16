@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::data::{DiffView, LogLine, RunView};
 use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
-    confirm_key, edit_text, item, picker_footer,
+    confirm_key, edit_text, help_key, help_scroll_max, item, picker_footer,
 };
 use crate::settings::Settings;
 use crate::state::PhaseStatus;
@@ -107,6 +107,8 @@ pub struct App {
     pub worker_busy: bool,
     /// The home screen is planning (set by the loop, for the quit question).
     pub planning_busy: bool,
+    /// First line of the `?` popup shown when it does not fit the screen.
+    pub help_scroll: usize,
     /// Spinner frame, set by the loop from the elapsed time.
     pub frame: usize,
     pub message: Option<Notice>,
@@ -143,6 +145,7 @@ impl App {
             running: None,
             worker_busy: false,
             planning_busy: false,
+            help_scroll: 0,
             frame: 0,
             message: None,
             settings: Settings::default(),
@@ -221,8 +224,11 @@ impl App {
             Mode::Note(buffer) => self.key_note(key, buffer),
             Mode::Search(buffer) => self.key_search(key, buffer),
             Mode::Help => {
-                // Any key closes the help; `?` is the one that opened it.
-                self.mode = Mode::Normal;
+                // Scrolling keys move the popup; any other key closes it.
+                let max = help_scroll_max(&App::shortcuts());
+                if help_key(&mut self.help_scroll, max, key) {
+                    self.mode = Mode::Normal;
+                }
                 None
             }
             Mode::Settings(panel) => self.key_settings(key, panel),
@@ -373,6 +379,7 @@ impl App {
             KeyCode::Char('A') => self.abandon(),
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
+                self.help_scroll = 0;
                 None
             }
             KeyCode::Char('s') => {
@@ -597,7 +604,7 @@ impl App {
             | Mode::ConfirmMerge(_) => return picker_footer(2),
             Mode::Note(_) => return vec![item("enter", "retry"), item("esc", "cancel")],
             Mode::Search(_) => return vec![item("enter", "search"), item("esc", "cancel")],
-            Mode::Help => return vec![item("any key", "close")],
+            Mode::Help => return vec![item("j/k", "scroll")],
             Mode::Normal => {}
         }
         let tail = [
@@ -994,7 +1001,7 @@ mod tests {
         confirm.mode = Mode::ConfirmQuit(0);
         assert_eq!(keys(&confirm), ["enter", "1–2", "esc"]);
         confirm.mode = Mode::Help;
-        assert_eq!(keys(&confirm), ["any key"]);
+        assert_eq!(keys(&confirm), ["j/k"]);
         assert!(keys(&a).iter().all(|k| k != "?"));
     }
 
@@ -1380,5 +1387,29 @@ mod tests {
         let mut a = panel();
         type_search(&mut a, "line 1");
         assert_eq!(a.handle_key(key('n')), Some(Command::Next));
+    }
+
+    #[test]
+    fn the_help_scrolls_with_j_k_and_pages_and_any_other_key_closes_it() {
+        let mut a = reviewing();
+        a.handle_key(key('?'));
+        assert_eq!(a.mode, Mode::Help);
+        a.handle_key(key('j'));
+        a.handle_key(code(KeyCode::Down));
+        assert_eq!((a.mode.clone(), a.help_scroll), (Mode::Help, 2));
+        a.handle_key(code(KeyCode::PageDown));
+        assert_eq!(a.help_scroll, 7);
+        a.handle_key(key('k'));
+        a.handle_key(code(KeyCode::PageUp));
+        assert_eq!((a.mode.clone(), a.help_scroll), (Mode::Help, 1));
+        for _ in 0..100 {
+            a.handle_key(code(KeyCode::PageDown));
+        }
+        assert_eq!(a.help_scroll, help_scroll_max(&App::shortcuts()));
+        a.handle_key(code(KeyCode::Char('x')));
+        assert_eq!(a.mode, Mode::Normal);
+        // Opening it again starts at the top.
+        a.handle_key(key('?'));
+        assert_eq!(a.help_scroll, 0);
     }
 }

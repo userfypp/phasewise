@@ -538,7 +538,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
             "Cancel",
             *row,
         ),
-        Mode::Help => shortcuts_popup(&App::shortcuts()),
+        Mode::Help => shortcuts_popup(&App::shortcuts()).scroll(app.help_scroll),
         Mode::Settings(panel) => settings_popup(panel, area.width),
         Mode::Search(buffer) => input_popup(
             "Search",
@@ -972,6 +972,23 @@ pub(super) mod tests {
         with_diff(&mut app);
         app.mode = Mode::Search("new".into());
         insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn the_shortcuts_popup_scrolls_on_a_short_screen() {
+        let mut app = app();
+        app.mode = Mode::Help;
+        let top = format!("{}", render(&mut app, 80, 24).backend());
+        assert!(top.contains("↓ more"), "{top}");
+        assert!(!top.contains("go to the next or previous match"), "{top}");
+        app.help_scroll = usize::MAX;
+        let bottom = format!("{}", render(&mut app, 80, 24).backend());
+        assert!(bottom.contains("↑ more"), "{bottom}");
+        assert!(
+            bottom.contains("go to the next or previous match"),
+            "{bottom}"
+        );
+        assert!(bottom.contains("Shortcuts"), "{bottom}");
     }
 
     #[test]
