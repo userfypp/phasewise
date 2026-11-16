@@ -561,6 +561,21 @@ fn invalid_timeout_override_is_an_error() {
 }
 
 #[test]
+fn a_zero_timeout_override_is_refused_before_the_agent_starts() {
+    let env = Env::new();
+    let out = env.exec(&["run"], &[("PHASEWISE_PHASE_TIMEOUT_SECONDS", "0")]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("PHASEWISE_PHASE_TIMEOUT_SECONDS must be at least 1 second"),
+        "{}",
+        out.stderr
+    );
+    assert!(env.calls_log().is_empty(), "the agent must not start");
+    env.check_invariants();
+}
+
+#[test]
 fn verify_timeout_fails_the_phase() {
     let plan = "+++\nverify = [\"sleep 30\"]\nverify_timeout_seconds = 1\nmax_retries = 0\n+++\n\n# T\n\n## Phase 1: Only\n\nDo it.\n";
     let env = Env::with_plan(plan);
