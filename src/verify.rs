@@ -115,6 +115,7 @@ pub fn run_all(
             child.finish_leftovers(LEFTOVER_GRACE);
         }
         let exit_code = status.code();
+        end_the_line(&mut log, log_path, start)?;
         if cancelled {
             writeln!(log, "interrupted")?;
             on_event(VerifyEvent::Finished {
@@ -154,6 +155,23 @@ pub fn run_all(
         }
     }
     Ok(VerifyOutcome::Passed)
+}
+
+/// Starts a new line in the log when the command's output, which begins at
+/// `start`, does not end with one, so that the trailer phasewise writes next is
+/// never glued to it.
+fn end_the_line(log: &mut File, log_path: &Path, start: u64) -> Result<()> {
+    let end = log.metadata()?.len();
+    if end > start {
+        let mut file = File::open(log_path)?;
+        file.seek(SeekFrom::Start(end - 1))?;
+        let mut last = [0u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            writeln!(log)?;
+        }
+    }
+    Ok(())
 }
 
 /// Last `TAIL_LINES` lines of the log between two byte offsets. The trailer
@@ -220,6 +238,35 @@ mod tests {
         assert_eq!(
             log,
             "=== attempt 1 ===\n$ echo hello\nhello\nexit code: 0\n$ echo oops >&2\noops\nexit code: 0\n"
+        );
+    }
+
+    #[test]
+    fn output_without_a_final_newline_keeps_the_trailer_on_its_own_line() {
+        let cancel = AtomicBool::new(false);
+        let (outcome, _, log, _dir) = run(
+            &["printf nonewline; exit 3", "printf done"],
+            Duration::from_secs(10),
+            &cancel,
+        );
+        match outcome {
+            VerifyOutcome::Failed(f) => assert_eq!(f.output_tail, "nonewline"),
+            other => panic!("unexpected outcome {other:?}"),
+        }
+        assert_eq!(
+            log,
+            "=== attempt 1 ===\n$ printf nonewline; exit 3\nnonewline\nexit code: 3\n"
+        );
+
+        let (outcome, _, log, _dir) = run(
+            &["printf done", "echo", "true"],
+            Duration::from_secs(10),
+            &cancel,
+        );
+        assert_eq!(outcome, VerifyOutcome::Passed);
+        assert_eq!(
+            log,
+            "=== attempt 1 ===\n$ printf done\ndone\nexit code: 0\n$ echo\n\nexit code: 0\n$ true\nexit code: 0\n"
         );
     }
 

@@ -710,6 +710,15 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         ));
     }
     for phase in &phases {
+        if phase.title.is_empty() {
+            errors.push(err(
+                phase.line,
+                format!(
+                    "phase {} has no title; write the title after `##` on its heading",
+                    phase.number
+                ),
+            ));
+        }
         if phase.body.is_empty() {
             errors.push(err(
                 phase.line,
@@ -721,7 +730,7 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         }
     }
     let mut seen: Vec<(String, usize)> = Vec::new();
-    for phase in &phases {
+    for phase in phases.iter().filter(|p| !p.title.is_empty()) {
         let key = phase.title.to_lowercase();
         match seen.iter().find(|(k, _)| *k == key) {
             Some((_, first)) => errors.push(err(
@@ -1174,6 +1183,25 @@ mod tests {
         let e = errs("## A\n\n```verify\nmake\n```\n\n## B\n\nx\n");
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].0, 1);
+    }
+
+    #[test]
+    fn an_empty_phase_title_is_an_error_at_its_heading() {
+        for heading in ["## ", "##", "## ##"] {
+            let text = format!("# T\n\n{heading}\n\nbody\n");
+            let e = errs(&text);
+            assert_eq!(e.len(), 1, "{heading:?}: {e:?}");
+            assert_eq!(e[0].0, 3, "{heading:?}");
+            assert!(e[0].1.contains("phase 1 has no title"), "{}", e[0].1);
+        }
+    }
+
+    #[test]
+    fn two_empty_phase_titles_are_not_reported_as_duplicates() {
+        let e = errs("## \n\na\n\n## \n\nb\n");
+        assert_eq!(e.len(), 2, "{e:?}");
+        assert_eq!((e[0].0, e[1].0), (1, 5));
+        assert!(e.iter().all(|(_, m)| m.contains("has no title")), "{e:?}");
     }
 
     #[test]
