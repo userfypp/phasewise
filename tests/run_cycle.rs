@@ -561,6 +561,24 @@ fn invalid_timeout_override_is_an_error() {
 }
 
 #[test]
+fn a_timeout_override_above_a_year_is_refused_before_the_agent_starts() {
+    let env = Env::new();
+    let out = env.exec(
+        &["run"],
+        &[("PHASEWISE_PHASE_TIMEOUT_SECONDS", "18446744073709551615")],
+    );
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .contains("PHASEWISE_PHASE_TIMEOUT_SECONDS must be at most 31536000 seconds"),
+        "{}",
+        out.stderr
+    );
+    assert!(env.calls_log().is_empty(), "the agent must not start");
+    env.check_invariants();
+}
+
+#[test]
 fn a_zero_timeout_override_is_refused_before_the_agent_starts() {
     let env = Env::new();
     let out = env.exec(&["run"], &[("PHASEWISE_PHASE_TIMEOUT_SECONDS", "0")]);

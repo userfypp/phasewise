@@ -197,6 +197,10 @@ struct RawPhaseSettings {
     effort: Option<String>,
 }
 
+/// The longest timeout a plan or an environment variable can ask for: a year
+/// is plenty, and it keeps every `Duration` and `Instant` sum far from overflow.
+pub const MAX_TIMEOUT_SECONDS: u64 = 365 * 24 * 60 * 60;
+
 /// Reads and parses a plan file. Errors are rendered one per line as
 /// `<path>:<line>: <message>`.
 pub fn load(path: &Path) -> Result<Plan> {
@@ -350,6 +354,14 @@ fn parse_front_matter(
                 key_line(text, 2, fm_lines, "phase_timeout_minutes"),
                 "`phase_timeout_minutes` must be at least 1",
             ));
+        } else if v > MAX_TIMEOUT_SECONDS / 60 {
+            errors.push(err(
+                key_line(text, 2, fm_lines, "phase_timeout_minutes"),
+                format!(
+                    "`phase_timeout_minutes` must be at most {} (one year)",
+                    MAX_TIMEOUT_SECONDS / 60
+                ),
+            ));
         }
         config.phase_timeout_minutes = v;
     }
@@ -358,6 +370,13 @@ fn parse_front_matter(
             errors.push(err(
                 key_line(text, 2, fm_lines, "verify_timeout_seconds"),
                 "`verify_timeout_seconds` must be at least 1",
+            ));
+        } else if v > MAX_TIMEOUT_SECONDS {
+            errors.push(err(
+                key_line(text, 2, fm_lines, "verify_timeout_seconds"),
+                format!(
+                    "`verify_timeout_seconds` must be at most {MAX_TIMEOUT_SECONDS} (one year)"
+                ),
             ));
         }
         config.verify_timeout_seconds = v;
@@ -938,6 +957,31 @@ mod tests {
         let e =
             errs("+++\nphase_timeout_minutes = 0\nverify_timeout_seconds = 0\n+++\n## A\n\nbody\n");
         assert_eq!(e.iter().map(|x| x.0).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    #[test]
+    fn timeouts_have_an_upper_bound_of_a_year() {
+        let year = MAX_TIMEOUT_SECONDS;
+        let ok_plan = ok(&format!(
+            "+++\nphase_timeout_minutes = {}\nverify_timeout_seconds = {year}\n+++\n## A\n\nbody\n",
+            year / 60
+        ));
+        assert_eq!(ok_plan.config.verify_timeout_seconds, year);
+        for (key, value) in [
+            ("verify_timeout_seconds", year + 1),
+            ("verify_timeout_seconds", i64::MAX as u64),
+            ("phase_timeout_minutes", year / 60 + 1),
+            ("phase_timeout_minutes", i64::MAX as u64),
+        ] {
+            let e = errs(&format!("+++\n{key} = {value}\n+++\n## A\n\nbody\n"));
+            assert_eq!(e.len(), 1, "{key} = {value}: {e:?}");
+            assert_eq!(e[0].0, 2);
+            assert!(
+                e[0].1.contains(key) && e[0].1.contains("at most"),
+                "{}",
+                e[0].1
+            );
+        }
     }
 
     #[test]

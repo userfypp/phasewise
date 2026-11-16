@@ -48,9 +48,30 @@ fn missing_agents_exit_one() {
 #[test]
 fn one_agent_is_enough() {
     let repo = TestRepo::new();
+    repo.write(
+        "phasewise.md",
+        include_str!("../src/templates/phasewise.md"),
+    );
+    repo.commit_all("add plan");
     doctor(&repo, FAKE_CLAUDE, MISSING)
         .success()
         .stdout(predicate::str::contains("✗ codex"));
+}
+
+#[test]
+fn a_missing_plan_agent_is_a_warning() {
+    let repo = TestRepo::new();
+    repo.write(
+        "phasewise.md",
+        include_str!("../src/templates/phasewise.md"),
+    );
+    repo.commit_all("add plan");
+    doctor(&repo, MISSING, FAKE_CODEX)
+        .success()
+        .stdout(predicate::str::contains(
+            "! the plan's agent is claude, which was not found; install it, set PHASEWISE_CLAUDE_BIN, or run with `--agent`",
+        ))
+        .stdout(predicate::str::contains("Tools are ready"));
 }
 
 #[test]
@@ -59,7 +80,9 @@ fn dirty_tree_and_missing_plan_are_reported() {
     repo.write("a.txt", "a");
     repo.write("b.txt", "b");
     doctor(&repo, FAKE_CLAUDE, FAKE_CODEX)
-        .success()
+        .code(1)
+        .stdout(predicate::str::contains("Not ready"))
+        .stdout(predicate::str::contains("Tools are ready").not())
         .stdout(predicate::str::contains("2 uncommitted path(s)"))
         .stdout(predicate::str::contains("phasewise.md not found"))
         .stdout(predicate::str::contains("will be added"));
@@ -79,7 +102,8 @@ fn outside_a_repository() {
         .env("PHASEWISE_CLAUDE_BIN", FAKE_CLAUDE)
         .env("PHASEWISE_CODEX_BIN", FAKE_CODEX)
         .assert()
-        .success()
+        .code(1)
+        .stdout(predicate::str::contains("Not ready"))
         .stdout(predicate::str::contains("not inside a git repository"))
         .stdout(predicate::str::contains("git init"));
 }
@@ -89,7 +113,7 @@ fn doctor_writes_nothing() {
     let repo = TestRepo::new();
     let exclude = repo.path().join(".git/info/exclude");
     let before = std::fs::read_to_string(&exclude).unwrap_or_default();
-    doctor(&repo, FAKE_CLAUDE, FAKE_CODEX).success();
+    doctor(&repo, FAKE_CLAUDE, FAKE_CODEX).code(1);
     assert!(!repo.path().join(".phasewise").exists());
     assert_eq!(
         std::fs::read_to_string(&exclude).unwrap_or_default(),

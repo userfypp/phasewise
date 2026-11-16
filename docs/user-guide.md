@@ -24,8 +24,10 @@ cargo install --path .
 
 Then run `phasewise doctor` inside your project. It checks git, both agents
 (installed, version and whether they are logged in) and whether the repository
-is ready (a first commit, a branch checked out, a clean working tree). A login
-that is not confirmed is a warning, not an error.
+is ready (a first commit, a branch checked out, a clean working tree, a valid
+plan). It exits `1` when git, both agents or any repository check fails. A login
+that is not confirmed, or a plan whose own agent is not installed (`run --agent`
+can override it), is a warning, not an error.
 
 ## How it works
 
@@ -380,9 +382,9 @@ Environment variables:
 | Variable | Effect |
 |---|---|
 | `PHASEWISE_CLAUDE_BIN`, `PHASEWISE_CODEX_BIN` | Use another binary for the agent. |
-| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase (at least 1). |
+| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase (1 to 31536000). |
 | `PHASEWISE_MAX_COST_USD` | Overrides `max_cost_usd` (the run's spending limit). |
-| `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200, at least 1). |
+| `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200, 1 to 31536000). |
 | `NO_COLOR` | Turns off colour in command output and in the screens (bold and dim stay). |
 | `PHASEWISE_CONFIG_DIR` | Directory of the [settings file](#settings) (default `$XDG_CONFIG_HOME/phasewise`, else `~/.config/phasewise`). |
 
