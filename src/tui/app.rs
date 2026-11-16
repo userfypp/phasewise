@@ -83,7 +83,9 @@ pub struct App {
     /// Index into `view.phases`.
     pub selected: usize,
     pub tab: Tab,
-    pub scroll: u16,
+    /// First visible line of the right panel (a `usize`: a diff can have more
+    /// than 65,535 lines).
+    pub scroll: usize,
     /// Content height of the right panel; set by the view on every draw.
     pub page: u16,
     pub mode: Mode,
@@ -287,11 +289,11 @@ impl App {
                 None
             }
             KeyCode::PageUp => {
-                self.scroll = self.scroll.saturating_sub(self.page);
+                self.scroll = self.scroll.saturating_sub(usize::from(self.page));
                 None
             }
             KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_add(self.page);
+                self.scroll = self.scroll.saturating_add(usize::from(self.page));
                 None
             }
             KeyCode::Char('n') => match self.why_not_next() {
