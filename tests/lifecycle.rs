@@ -354,6 +354,46 @@ fn abort_after_a_failed_phase_keeps_the_leftovers_in_a_commit() {
 }
 
 #[test]
+fn abort_completes_when_the_only_dirty_path_cannot_be_staged() {
+    let mut env = Env::new();
+    // Changes inside a submodule show up in `git status` but `git add` cannot
+    // stage them from the parent repository.
+    let sub = TestRepo::new();
+    let sub_path = sub.path().to_str().expect("utf-8 path").to_string();
+    env.repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        &sub_path,
+        "sub",
+    ]);
+    env.repo.commit_all("add a submodule");
+    env.main_sha = env.repo.git_trim(&["rev-parse", "main"]);
+    env.ok(&["run"], &[]);
+    let run_id = env.run_id();
+    env.repo
+        .write("sub/scratch.txt", "not committed in the submodule\n");
+    assert!(
+        env.repo.git(&["status", "--porcelain"]).contains("sub"),
+        "the submodule must look dirty"
+    );
+
+    let out = env.ok(&["abort"], &[]);
+    assert!(
+        !out.stdout.contains("Uncommitted changes"),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), "main");
+    assert_eq!(env.state()["status"], "aborted");
+    let branch = format!("phasewise/{run_id}");
+    let message = env.repo.git(&["log", "-1", "--format=%B", &branch]);
+    assert!(!message.contains("uncommitted changes"), "{message}");
+    env.check_invariants();
+}
+
+#[test]
 fn abort_off_the_run_branch_does_not_switch() {
     let env = Env::new();
     env.ok(&["run"], &[]);

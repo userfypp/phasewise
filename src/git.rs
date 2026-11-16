@@ -427,10 +427,17 @@ If no git command is running, the lock is left over from a crash: delete {path} 
                 args.join(" ")
             );
         }
+        // Some commands (`git commit` with nothing to commit) explain themselves
+        // on stdout and leave stderr empty.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = match stderr.trim() {
+            "" => stdout.trim(),
+            text => text,
+        };
         anyhow!(
-            "`git {}` failed: {}. Fix the problem in the repository and try again.",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
+            "`git {}` failed: {detail}. Fix the problem in the repository and try again.",
+            args.join(" ")
         )
     }
 
@@ -606,6 +613,21 @@ mod tests {
         assert!(err.contains("index.lock"), "{err}");
         assert!(err.contains("delete"), "{err}");
         assert!(err.contains("another git process"), "{err}");
+    }
+
+    #[test]
+    fn a_failure_that_only_wrote_to_stdout_still_says_why() {
+        let (dir, git) = repo();
+        fs::write(dir.path().join("a.txt"), "a").expect("write");
+        git.add_all().expect("add");
+        git.commit("first", false).expect("first commit");
+        // Nothing to commit: git explains on stdout and leaves stderr empty.
+        let err = git
+            .commit("second", false)
+            .expect_err("must fail")
+            .to_string();
+        assert!(err.contains("nothing to commit"), "{err}");
+        assert!(!err.contains("failed: ."), "{err}");
     }
 
     #[test]

@@ -781,11 +781,15 @@ pub fn abort(run: &mut Run) -> Result<AbortOutcome> {
     if on_run_branch(run)? {
         if !dirty_paths(&run.git)?.is_empty() {
             run.git.add_all()?;
-            let message = format!(
-                "phasewise: abort — uncommitted changes\n\nPhasewise-Run: {}",
-                run.state.run_id
-            );
-            leftovers_sha = Some(run.git.commit(&message, false)?);
+            // A dirty path can be something `git add` cannot stage (changes
+            // inside a submodule): then there is nothing to commit.
+            if run.git.has_staged_changes()? {
+                let message = format!(
+                    "phasewise: abort — uncommitted changes\n\nPhasewise-Run: {}",
+                    run.state.run_id
+                );
+                leftovers_sha = Some(run.git.commit(&message, false)?);
+            }
         }
         run.git.switch(&run.state.original_branch).map_err(|e| {
             anyhow!(
