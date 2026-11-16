@@ -54,7 +54,7 @@ check runs as a child process in its own process group.
 | `git.rs` | The only module that runs git. |
 | `state.rs` | `state.json`, the `.phasewise` layout, atomic writes, the run lock and recovery. |
 | `process.rs` | Process groups, termination, signals, the panic hook, the closed-terminal watch. |
-| `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths. |
+| `display.rs` | Events into text: `EventLine`s, phase headers and summaries, status and failure labels, model names, paths, and the Markdown of `phasewise report` (`report_markdown`, pure). |
 | `style.rs` | `Styler`: ANSI colour for the CLI, only on a terminal with `NO_COLOR` unset, `TERM` not `dumb` and the `color` setting not `never`. The TUI follows the same rule: when colour is off, `widgets::strip_color` clears every colour of a drawn frame and turns the dim grey into the dim attribute. |
 | `settings.rs` | User settings: the registry (one table entry per setting), `settings.toml` in the user's configuration directory, validation, atomic save, the bell decision. |
 | `doctor.rs` | `phasewise doctor`. |
@@ -229,7 +229,10 @@ These hold everywhere. A change that breaks one is a design change.
   phasewise's own bookkeeping.
 - **The only file written outside `.phasewise/` is the user settings file**
   (`settings.toml`, see `settings.rs`), and only when the user changes a
-  setting. It is written atomically; a file that is not valid TOML is never
+  setting. Changes are read-modify-write under a lock file next to it
+  (`settings.toml.lock`, created exclusively and removed afterwards; a lock
+  older than ten seconds is the leftover of a crash and is removed; reading
+  never creates it). It is written atomically; a file that is not valid TOML is never
   overwritten without keeping a copy as `settings.toml.bak`. Settings only
   fill in what environment variables, command-line flags and the plan leave
   open. The TUI keeps the settings in force in its loop and copies them to

@@ -548,6 +548,27 @@ fn agent_timeout_stops_the_process() {
 }
 
 #[test]
+fn timeout_override_wins_over_a_phase_timeout() {
+    let plan = plan_with("").replace(
+        "Do one.\n",
+        "Do one.\n\n```phasewise\nphase_timeout_minutes = 30\n```\n",
+    );
+    let env = Env::with_plan(&plan);
+    let started = Instant::now();
+    let out = env.exec(
+        &["run"],
+        &[
+            ("FAKE_MODE", "slow"),
+            ("PHASEWISE_PHASE_TIMEOUT_SECONDS", "1"),
+        ],
+    );
+    assert!(started.elapsed() < Duration::from_secs(30));
+    assert_eq!(out.code, 3, "{}\n{}", out.stdout, out.stderr);
+    assert_eq!(failure_of(&env.state(), 1).0, "timeout");
+    env.check_invariants();
+}
+
+#[test]
 fn invalid_timeout_override_is_an_error() {
     let env = Env::new();
     let out = env.exec(&["run"], &[("PHASEWISE_PHASE_TIMEOUT_SECONDS", "soon")]);

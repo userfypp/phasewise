@@ -464,13 +464,43 @@ fn parse_timeout_seconds(name: &str, value: &str) -> Result<Duration> {
     Ok(Duration::from_secs(secs))
 }
 
+/// The agent's time limit in a phase: the environment variable wins over the
+/// phase's own `phase_timeout_minutes`, which wins over the plan's.
+fn effective_phase_timeout(
+    plan_minutes: u64,
+    phase_minutes: Option<u64>,
+    env: Option<Duration>,
+) -> Duration {
+    env.unwrap_or_else(|| {
+        Duration::from_secs(phase_minutes.unwrap_or(plan_minutes).saturating_mul(60))
+    })
+}
+
 /// Limits from the plan; `PHASEWISE_PHASE_TIMEOUT_SECONDS` overrides the phase timeout.
+/// The phase timeout is the plan's: use `settings_for_phase` for a given phase.
 pub fn settings(run: &Run) -> Result<PhaseSettings> {
+    settings_with(run, None)
+}
+
+/// Like `settings`, with the phase timeout of phase `number` (its own
+/// `phase_timeout_minutes` when its settings block sets one).
+pub fn settings_for_phase(run: &Run, number: usize) -> Result<PhaseSettings> {
+    let own = run
+        .plan
+        .phases
+        .iter()
+        .find(|p| p.number == number)
+        .and_then(|p| p.phase_timeout_minutes);
+    settings_with(run, own)
+}
+
+fn settings_with(run: &Run, phase_minutes: Option<u64>) -> Result<PhaseSettings> {
     let config = &run.plan.config;
-    let phase_timeout = match std::env::var(PHASE_TIMEOUT_ENV) {
-        Ok(value) => parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?,
-        Err(_) => Duration::from_secs(config.phase_timeout_minutes.saturating_mul(60)),
+    let env = match std::env::var(PHASE_TIMEOUT_ENV) {
+        Ok(value) => Some(parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?),
+        Err(_) => None,
     };
+    let phase_timeout = effective_phase_timeout(config.phase_timeout_minutes, phase_minutes, env);
     let max_cost_usd = spending_limit(run)?;
     Ok(PhaseSettings {
         max_retries: config.max_retries,
@@ -985,7 +1015,7 @@ fn run_one(
     cancel: &AtomicBool,
 ) -> Result<PhaseStatus> {
     let agent = agent_for(phase_agent(&run.state, &run.plan, number));
-    let settings = settings(run)?;
+    let settings = settings_for_phase(run, number)?;
     check_budget(run, &settings, number)?;
     let mut ctx = PhaseContext {
         git: &run.git,
@@ -1466,6 +1496,15 @@ fn check_plan_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phase_timeout_precedence_is_env_then_phase_then_plan() {
+        let secs = Duration::from_secs;
+        assert_eq!(effective_phase_timeout(60, None, None), secs(3600));
+        assert_eq!(effective_phase_timeout(60, Some(5), None), secs(300));
+        assert_eq!(effective_phase_timeout(60, None, Some(secs(7))), secs(7));
+        assert_eq!(effective_phase_timeout(60, Some(5), Some(secs(7))), secs(7));
+    }
 
     #[test]
     fn until_wins_over_auto_and_must_be_in_range() {

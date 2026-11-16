@@ -147,6 +147,9 @@ pub struct Phase {
     pub effort: Option<String>,
     /// Agent for this phase only, from the settings block.
     pub agent: Option<AgentKind>,
+    /// Time limit for the agent in this phase, from the settings block; it
+    /// overrides the plan's `phase_timeout_minutes`.
+    pub phase_timeout_minutes: Option<u64>,
     /// Line of the phase heading.
     pub line: usize,
 }
@@ -195,6 +198,7 @@ struct RawPhaseSettings {
     agent: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    phase_timeout_minutes: Option<u64>,
 }
 
 /// The longest timeout a plan or an environment variable can ask for: a year
@@ -718,6 +722,7 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
             model: settings.model,
             effort: settings.effort,
             agent: settings.agent,
+            phase_timeout_minutes: settings.phase_timeout_minutes,
             line: line_of(text, heading.range.start),
         });
     }
@@ -776,6 +781,7 @@ struct PhaseSettings {
     agent: Option<AgentKind>,
     model: Option<String>,
     effort: Option<String>,
+    phase_timeout_minutes: Option<u64>,
 }
 
 /// Parses the TOML of a `phasewise` block whose fence is at `fence_line`.
@@ -805,6 +811,24 @@ fn parse_phase_settings(content: &str, fence_line: usize) -> Result<PhaseSetting
             }
         }
     }
+    let mut phase_timeout_minutes = None;
+    if let Some(v) = raw.phase_timeout_minutes {
+        let key = "phase_timeout_minutes";
+        let line = fence_line + key_line(content, 1, content.lines().count(), key);
+        if v < 1 {
+            errors.push(err(line, format!("`{key}` must be at least 1")));
+        } else if v > MAX_TIMEOUT_SECONDS / 60 {
+            errors.push(err(
+                line,
+                format!(
+                    "`{key}` must be at most {} (one year)",
+                    MAX_TIMEOUT_SECONDS / 60
+                ),
+            ));
+        } else {
+            phase_timeout_minutes = Some(v);
+        }
+    }
     let mut out = [None, None];
     for (i, (key, value)) in [("model", raw.model), ("effort", raw.effort)]
         .into_iter()
@@ -826,6 +850,7 @@ fn parse_phase_settings(content: &str, fence_line: usize) -> Result<PhaseSetting
             agent,
             model,
             effort,
+            phase_timeout_minutes,
         })
     } else {
         Err(errors)
@@ -1373,6 +1398,37 @@ mod tests {
         let plan = ok("## A\n\nx\n\n```phasewise\neffort = \"max\"\n```\n");
         assert_eq!(plan.phases[0].model, None);
         assert_eq!(plan.phases[0].effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn phase_settings_block_sets_its_own_timeout() {
+        let max = MAX_TIMEOUT_SECONDS / 60;
+        let plan = ok(&format!(
+            "+++\nphase_timeout_minutes = 5\n+++\n## A\n\nx\n\n```phasewise\nphase_timeout_minutes = {max}\n```\n\n## B\n\ny\n"
+        ));
+        assert_eq!(plan.config.phase_timeout_minutes, 5);
+        assert_eq!(plan.phases[0].phase_timeout_minutes, Some(max));
+        assert_eq!(plan.phases[1].phase_timeout_minutes, None);
+    }
+
+    #[test]
+    fn phase_settings_block_timeout_is_validated() {
+        let block = |value: &str| {
+            format!(
+                "## A\n\nx\n\n```phasewise\nmodel = \"m\"\nphase_timeout_minutes = {value}\n```\n"
+            )
+        };
+        let es = errs(&block("0"));
+        assert_eq!(es.len(), 1, "{es:?}");
+        assert_eq!(es[0].0, 7);
+        assert!(es[0].1.contains("at least 1"), "{es:?}");
+        let es = errs(&block(&(MAX_TIMEOUT_SECONDS / 60 + 1).to_string()));
+        assert_eq!(es[0].0, 7);
+        assert!(es[0].1.contains("at most 525600"), "{es:?}");
+        let es = errs(&block("\"soon\""));
+        assert_eq!(es[0].0, 7);
+        let es = errs(&block("1.5"));
+        assert_eq!(es[0].0, 7);
     }
 
     #[test]
