@@ -300,13 +300,37 @@ fn draw_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(lines).scroll((app.scroll, 0)), content);
 }
 
+/// Text for the content pane. The terminal buffer cannot hold control
+/// characters (ratatui drops them, so a tab would swallow the indentation and
+/// an escape sequence would leave its tail behind): a tab becomes 4 spaces,
+/// any other control character (ESC, DEL, CR, C1) becomes `\u{FFFD}`.
+fn sanitize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("    "),
+            c if c.is_control() => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn log_line(line: &LogLine) -> Line<'static> {
     match line {
         LogLine::Attempt { number, resumed } => Line::styled(
             LogLine::attempt_heading(*number, *resumed),
             role_style(Role::Heading),
         ),
-        LogLine::Event(event) => Line::from(event_spans(event)),
+        LogLine::Event(event) => Line::from(
+            event_spans(event)
+                .into_iter()
+                .map(|mut span| {
+                    span.content = sanitize(&span.content).into();
+                    span
+                })
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
@@ -316,7 +340,9 @@ fn log_line(line: &LogLine) -> Line<'static> {
 fn verify_lines(text: &str) -> Vec<Line<'static>> {
     let all: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
-    for (i, line) in all.iter().enumerate() {
+    for (i, raw) in all.iter().enumerate() {
+        let clean = sanitize(raw);
+        let line = clean.as_str();
         if let Some(command) = line.strip_prefix("$ ") {
             let result = all[i + 1..]
                 .iter()
@@ -341,13 +367,13 @@ fn verify_lines(text: &str) -> Vec<Line<'static>> {
             ]));
         } else if line.starts_with("=== ") {
             out.push(Line::styled(line.to_string(), role_style(Role::Dim)));
-        } else if (line.starts_with("exit code: ") && *line != "exit code: 0")
+        } else if (line.starts_with("exit code: ") && line != "exit code: 0")
             || line.starts_with("timed out after ")
-            || *line == "interrupted"
+            || line == "interrupted"
         {
             out.push(Line::styled(line.to_string(), role_style(Role::Fail)));
         } else {
-            out.push(Line::raw(line.to_string()));
+            out.push(Line::raw(clean));
         }
     }
     out
@@ -361,12 +387,12 @@ fn diff_lines(diff: &DiffView) -> Vec<Line<'static>> {
             _ => "bin".to_string(),
         };
         lines.push(Line::styled(
-            format!("  {path}  {counts}"),
+            format!("  {}  {counts}", sanitize(path)),
             role_style(Role::Heading),
         ));
     }
     if let Some(note) = &diff.note {
-        lines.push(Line::raw(note.clone()));
+        lines.push(Line::raw(sanitize(note)));
     }
     if !diff.text.is_empty() {
         if !lines.is_empty() {
@@ -382,7 +408,11 @@ fn diff_lines(diff: &DiffView) -> Vec<Line<'static>> {
             "Untracked files:",
             Style::new().add_modifier(Modifier::BOLD),
         ));
-        lines.extend(diff.untracked.iter().map(|p| Line::raw(format!("  ? {p}"))));
+        lines.extend(
+            diff.untracked
+                .iter()
+                .map(|p| Line::raw(sanitize(&format!("  ? {p}")))),
+        );
     }
     lines
 }
@@ -411,7 +441,7 @@ fn diff_line(line: &str) -> Line<'static> {
     } else {
         Style::new()
     };
-    Line::styled(line.to_string(), style)
+    Line::styled(sanitize(line), style)
 }
 
 fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
@@ -637,6 +667,24 @@ pub(super) mod tests {
                 .expect("retry line"),
             ),
         ];
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn sanitize_replaces_control_characters() {
+        assert_eq!(sanitize("+\t\tif x {"), "+        if x {");
+        assert_eq!(sanitize("\x1b[31mred"), "\u{FFFD}[31mred");
+        assert_eq!(sanitize("a\x7fb\rc"), "a\u{FFFD}b\u{FFFD}c");
+        assert_eq!(sanitize("plain text {}"), "plain text {}");
+        assert_eq!(sanitize("héllo ✓ 日本 😀"), "héllo ✓ 日本 😀");
+    }
+
+    #[test]
+    fn diff_keeps_tab_indentation_and_hides_escapes() {
+        let mut app = app();
+        with_diff(&mut app);
+        app.diff.text =
+            "@@ -1,2 +1,3 @@\n fn main() {\n+\t\tif x {\n+\x1b[31mred\x1b[0m\n }\n".to_string();
         insta::assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
