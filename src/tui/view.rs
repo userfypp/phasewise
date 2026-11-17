@@ -12,8 +12,8 @@ use super::data::{DiffView, LogLine, PhaseView};
 use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, char_width, confirm_popup, dim, dim_join,
-    draw_too_small, duration_text, elapsed_since, event_spans, footer_line, input_popup,
-    limit_spans, line_width, margin, notice_line, render_popup, role_style, sanitize,
+    draw_too_small, duration_text, elapsed_since, event_spans, failure_popup, footer_line,
+    input_popup, limit_spans, line_width, margin, notice_line, render_popup, role_style, sanitize,
     settings_popup, shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{money, status_label};
@@ -70,7 +70,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         )),
         footer_area,
     );
-    draw_popup(frame, app, area);
+    let furthest = draw_popup(frame, app, area);
+    if app.mode == Mode::Failure {
+        app.failure_scroll = app.failure_scroll.min(furthest);
+    }
 }
 
 /// Width of the phase list: the longest row plus two, within 24 columns and
@@ -467,10 +470,12 @@ fn diff_line(line: &str) -> Line<'static> {
     Line::styled(sanitize(line), style)
 }
 
-fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
+/// Draws the popup of the current mode, if any. Returns how far its body can
+/// scroll.
+fn draw_popup(frame: &mut Frame, app: &App, area: Rect) -> usize {
     let view = &app.view;
     let popup = match &app.mode {
-        Mode::Normal => return,
+        Mode::Normal => return 0,
         Mode::ConfirmRollback(n, row) => confirm_popup(
             &if *n == 0 {
                 "Roll back to the start?".to_string()
@@ -523,6 +528,10 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
             *row,
         ),
         Mode::Help => shortcuts_popup(&App::shortcuts()).scroll(app.help_scroll),
+        Mode::Failure => match app.view.phases.get(app.selected) {
+            Some(p) => failure_popup(p, area.width).scroll(app.failure_scroll),
+            None => return 0,
+        },
         Mode::Settings(panel) => settings_popup(panel, area.width),
         Mode::Search(buffer) => input_popup(
             "Search",
@@ -537,7 +546,7 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
             area.width,
         ),
     };
-    render_popup(frame, area, &popup);
+    render_popup(frame, area, &popup)
 }
 
 /// The phase a retry applies to: the failed one, else the one in review.
@@ -577,6 +586,7 @@ pub(super) mod tests {
             finished_at: None,
             failure_kind: None,
             failure_detail: None,
+            logs: Vec::new(),
         };
         let mut app = App::new(RunView {
             run_id: "20260101-120000".into(),
@@ -648,6 +658,7 @@ pub(super) mod tests {
         let modes = [
             Mode::Normal,
             Mode::Help,
+            Mode::Failure,
             Mode::ConfirmRollback(1, 0),
             Mode::ConfirmInterrupt(0),
             Mode::ConfirmQuit(0),
@@ -661,6 +672,8 @@ pub(super) mod tests {
             for tab in Tab::ALL {
                 let mut app = app();
                 with_diff(&mut app);
+                app.selected = 3;
+                app.view.phases[3].logs = vec![".phasewise/runs/r/phase-04.verify.log".into()];
                 app.tab = tab;
                 app.mode = mode.clone();
                 app.message = Some(Notice::warn(
@@ -787,6 +800,59 @@ pub(super) mod tests {
             "cut at eight lines\n{text}"
         );
         insta::assert_snapshot!(terminal.backend());
+    }
+
+    fn failed_with_a_long_detail() -> App {
+        let mut app = app();
+        app.selected = 3;
+        let detail = (1..=40)
+            .map(|i| format!("error line {i} with some text to fill the width of the pane"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.view.phases[3].failure_detail = Some(detail);
+        app.view.phases[3].logs = vec![
+            ".phasewise/runs/20260101-120000/phase-04.attempt-1.jsonl".into(),
+            ".phasewise/runs/20260101-120000/phase-04.verify.log".into(),
+        ];
+        app.mode = Mode::Failure;
+        app
+    }
+
+    #[test]
+    fn the_failure_popup_shows_the_start_of_a_long_detail_and_says_there_is_more() {
+        let mut app = failed_with_a_long_detail();
+        let terminal = render(&mut app, 100, 30);
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("✗ Phase 4: Checks failed"), "{text}");
+        assert!(text.contains("error line 1 "), "{text}");
+        assert!(!text.contains("error line 40 "), "{text}");
+        assert!(text.contains("↓ more"), "{text}");
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn the_failure_popup_scrolls_to_the_logs_and_never_past_them() {
+        let mut app = failed_with_a_long_detail();
+        app.failure_scroll = 10_000;
+        let terminal = render(&mut app, 100, 30);
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("error line 40 "), "{text}");
+        assert!(text.contains("Logs"), "{text}");
+        assert!(
+            text.contains(".phasewise/runs/20260101-120000/phase-04.verify.log"),
+            "{text}"
+        );
+        assert!(
+            text.contains("↑ more") && !text.contains("↓ more"),
+            "{text}"
+        );
+        // The stored scroll came back to the last position, so one `k` moves.
+        let furthest = app.failure_scroll;
+        assert!(furthest < 10_000, "{furthest}");
+        app.handle_key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Up,
+        ));
+        assert_eq!(app.failure_scroll, furthest - 1);
     }
 
     #[test]

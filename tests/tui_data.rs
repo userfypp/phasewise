@@ -103,6 +103,18 @@ fn checkpointed_phase_shows_its_diff_log_and_verify_output() {
         "{log:?}"
     );
 
+    // The logs that exist, relative to the repository: phase 3 has none yet.
+    let id = &view.run_id;
+    assert_eq!(
+        view.phases[0].logs,
+        [
+            format!(".phasewise/runs/{id}/phase-01.attempt-1.jsonl"),
+            format!(".phasewise/runs/{id}/phase-01.attempt-1.stderr.log"),
+            format!(".phasewise/runs/{id}/phase-01.verify.log"),
+        ]
+    );
+    assert!(view.phases[2].logs.is_empty());
+
     assert_ne!(load_verify(&run, 1), "No verification output yet.");
     assert_eq!(load_verify(&run, 3), "No verification output yet.");
     assert_eq!(

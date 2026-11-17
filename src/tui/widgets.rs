@@ -9,6 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
+use super::data::PhaseView;
 use super::shared::{FooterItem, Level, Notice, SettingsPanel, ShortcutGroups, item};
 use crate::display::{EventLine, limit_parts, limits_clock};
 use crate::settings::{self, REGISTRY};
@@ -351,8 +352,9 @@ impl Popup {
     }
 }
 
-/// Draws the popup centred horizontally at a quarter of the height.
-pub fn render_popup(frame: &mut Frame, area: Rect, popup: &Popup) {
+/// Draws the popup centred horizontally at a quarter of the height. Returns
+/// the furthest the body can be scrolled (0 when it all fits).
+pub fn render_popup(frame: &mut Frame, area: Rect, popup: &Popup) -> usize {
     let room = popup.text_room(area.width);
     let widest_body = popup.body.iter().map(line_width).max().unwrap_or(0);
     let description_width = popup.description.as_deref().map_or(0, text_width);
@@ -378,9 +380,11 @@ pub fn render_popup(frame: &mut Frame, area: Rect, popup: &Popup) {
     // that there is more above or below.
     let rows = usize::from(height).saturating_sub(2 + head.len());
     let mut lines = head;
+    let mut furthest = 0;
     if popup.body.len() > rows && rows >= 2 {
         let shown = rows - 1;
-        let offset = popup.scroll.min(popup.body.len() - shown);
+        furthest = popup.body.len() - shown;
+        let offset = popup.scroll.min(furthest);
         lines.extend(popup.body[offset..offset + shown].iter().cloned());
         let more = match (offset > 0, offset + shown < popup.body.len()) {
             (true, true) => "↑↓ more",
@@ -410,6 +414,7 @@ pub fn render_popup(frame: &mut Frame, area: Rect, popup: &Popup) {
         ..content
     };
     frame.render_widget(Paragraph::new(lines), content);
+    furthest
 }
 
 /// A row of a picker.
@@ -611,6 +616,36 @@ pub fn error_popup(lines: &[String], screen_width: u16) -> Popup {
     // Drop a leading blank line: the popup adds its own.
     while body.first().is_some_and(|l| line_width(l) == 0) {
         body.remove(0);
+    }
+    popup.body(body)
+}
+
+/// The whole failure of a phase: what happened, wrapped, then where the logs
+/// are (one path per line, never wrapped, so it can be copied).
+pub fn failure_popup(phase: &PhaseView, screen_width: u16) -> Popup {
+    let kind = phase.failure_kind.as_deref().unwrap_or("Failed");
+    let mut popup = Popup::new("");
+    popup.max_width = ERROR_WIDTH;
+    popup.title = Line::styled(
+        format!("✗ Phase {}: {kind}", phase.number),
+        role_style(Role::Fail),
+    );
+    let room = popup.text_room(screen_width);
+    let mut body = Vec::new();
+    for line in phase.failure_detail.as_deref().unwrap_or("").trim().lines() {
+        let line = sanitize(line);
+        let line = line.as_str();
+        let indent = text_width(line) - text_width(line.trim_start());
+        for part in wrap_text(line.trim_start(), room.saturating_sub(indent)) {
+            body.push(Line::raw(format!("{}{part}", " ".repeat(indent))));
+        }
+    }
+    if !phase.logs.is_empty() {
+        if !body.is_empty() {
+            body.push(Line::raw(""));
+        }
+        body.push(Line::styled("Logs", dim()));
+        body.extend(phase.logs.iter().map(|path| Line::raw(sanitize(path))));
     }
     popup.body(body)
 }
@@ -872,7 +907,9 @@ mod tests {
         );
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
         terminal
-            .draw(|f| render_popup(f, f.area(), &popup))
+            .draw(|f| {
+                render_popup(f, f.area(), &popup);
+            })
             .expect("draw");
         let buffer = terminal.backend().buffer().clone();
         let rows: Vec<String> = (0..30)

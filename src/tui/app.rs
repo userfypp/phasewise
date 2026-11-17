@@ -57,6 +57,8 @@ pub enum Mode {
     Search(String),
     /// Popup listing every key.
     Help,
+    /// Popup with the whole failure of the selected phase and where its logs are.
+    Failure,
     /// The user settings menu.
     Settings(SettingsPanel),
 }
@@ -109,6 +111,8 @@ pub struct App {
     pub planning_busy: bool,
     /// First line of the `?` popup shown when it does not fit the screen.
     pub help_scroll: usize,
+    /// First line shown in the failure popup (kept within its text by the renderer).
+    pub failure_scroll: usize,
     /// Spinner frame, set by the loop from the elapsed time.
     pub frame: usize,
     pub message: Option<Notice>,
@@ -146,6 +150,7 @@ impl App {
             worker_busy: false,
             planning_busy: false,
             help_scroll: 0,
+            failure_scroll: 0,
             frame: 0,
             message: None,
             settings: Settings::default(),
@@ -249,6 +254,13 @@ impl App {
                 // Scrolling keys move the popup; any other key closes it.
                 let max = help_scroll_max(&App::shortcuts());
                 if help_key(&mut self.help_scroll, max, key) {
+                    self.mode = Mode::Normal;
+                }
+                None
+            }
+            Mode::Failure => {
+                // The renderer holds the scroll within the text.
+                if help_key(&mut self.failure_scroll, usize::MAX, key) {
                     self.mode = Mode::Normal;
                 }
                 None
@@ -405,6 +417,20 @@ impl App {
             KeyCode::Char('q') => self.quit(),
             KeyCode::Esc => Some(Command::Home),
             KeyCode::Char('A') => self.abandon(),
+            KeyCode::Char('f') => {
+                match self.view.phases.get(self.selected) {
+                    Some(p) if p.failure_kind.is_some() => {
+                        self.mode = Mode::Failure;
+                        self.failure_scroll = 0;
+                    }
+                    Some(p) => {
+                        self.message =
+                            Some(Notice::warn(format!("Phase {} has not failed.", p.number)));
+                    }
+                    None => self.message = Some(Notice::warn("There is no phase.")),
+                }
+                None
+            }
             KeyCode::Char('?') => {
                 self.mode = Mode::Help;
                 self.help_scroll = 0;
@@ -632,7 +658,7 @@ impl App {
             | Mode::ConfirmMerge(_) => return picker_footer(2),
             Mode::Note(_) => return vec![item("enter", "retry"), item("esc", "cancel")],
             Mode::Search(_) => return vec![item("enter", "search"), item("esc", "cancel")],
-            Mode::Help => return vec![item("j/k", "scroll")],
+            Mode::Help | Mode::Failure => return vec![item("j/k", "scroll")],
             Mode::Normal => {}
         }
         let tail = [
@@ -652,7 +678,11 @@ impl App {
                 item("b", "roll back"),
             ]);
         } else if self.view.active && status == Some(PhaseStatus::Failed) {
-            keys.extend([item("r", "retry"), item("b", "roll back")]);
+            keys.extend([
+                item("r", "retry"),
+                item("b", "roll back"),
+                item("f", "failure"),
+            ]);
         } else if self.view.completed {
             keys.extend([item("m", "merge"), item("j/k", "phase")]);
         } else {
@@ -670,6 +700,7 @@ impl App {
                 vec![
                     ("j / k", "select the next or previous phase"),
                     ("tab", "switch between Diff, Log and Verify"),
+                    ("f", "show the whole failure and its logs"),
                 ],
             ),
             (
@@ -729,6 +760,7 @@ mod tests {
             finished_at: None,
             failure_kind: None,
             failure_detail: None,
+            logs: Vec::new(),
         }
     }
 
@@ -1015,7 +1047,7 @@ mod tests {
             phase(1, PhaseStatus::Done, true),
             phase(2, PhaseStatus::Failed, false),
         ]);
-        assert_eq!(keys(&failed), ["r", "b", "tab", "esc", "q", "s"]);
+        assert_eq!(keys(&failed), ["r", "b", "f", "tab", "esc", "q", "s"]);
         let mut other = reviewing();
         other.selected = 0;
         assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);
@@ -1349,6 +1381,45 @@ mod tests {
         a.mode = Mode::Note("try ".into());
         a.handle_paste("again\r\nplease");
         assert_eq!(a.mode, Mode::Note("try again please".into()));
+    }
+
+    fn failed_app() -> App {
+        let mut failed = phase(2, PhaseStatus::Failed, false);
+        failed.failure_kind = Some("Checks failed".into());
+        failed.failure_detail = Some("cargo test failed".into());
+        app(vec![phase(1, PhaseStatus::Done, true), failed])
+    }
+
+    #[test]
+    fn f_opens_the_failure_of_a_failed_phase_and_any_other_key_closes_it() {
+        let mut a = failed_app();
+        assert_eq!(a.selected_number(), Some(2));
+        assert_eq!(a.handle_key(key('f')), None);
+        assert_eq!(a.mode, Mode::Failure);
+        assert_eq!(a.footer().len(), 1);
+        // The scrolling keys move it; the renderer holds the scroll in range.
+        a.handle_key(key('j'));
+        a.handle_key(code(KeyCode::PageDown));
+        assert_eq!(a.mode, Mode::Failure);
+        assert_eq!(a.failure_scroll, 6);
+        a.handle_key(key('k'));
+        assert_eq!(a.failure_scroll, 5);
+        assert_eq!(a.handle_key(key('x')), None, "a key that closes is not run");
+        assert_eq!(a.mode, Mode::Normal);
+        // Opened again, it starts at the top.
+        a.handle_key(key('f'));
+        assert_eq!(a.failure_scroll, 0);
+    }
+
+    #[test]
+    fn f_on_a_phase_that_did_not_fail_says_so() {
+        let mut a = reviewing();
+        a.handle_key(key('f'));
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(
+            a.message.as_ref().map(|m| m.text.as_str()),
+            Some("Phase 2 has not failed.")
+        );
     }
 
     #[test]

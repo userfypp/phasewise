@@ -9,7 +9,7 @@ use crate::agent::AgentEvent;
 use crate::agent::agent_for;
 use crate::display::{
     EventLine, agent_event_line, failure_kind_label, failure_kind_words, first_line_short,
-    model_name,
+    model_name, path_in,
 };
 use crate::engine::phase_agent;
 use crate::git::Git;
@@ -65,6 +65,8 @@ pub struct PhaseView {
     /// Failure in plain words (`Checks failed`) and its full detail.
     pub failure_kind: Option<String>,
     pub failure_detail: Option<String>,
+    /// The logs of the last attempt that exist, relative to the repository.
+    pub logs: Vec<String>,
 }
 
 /// Diff of one phase. `files` holds the path and the added/removed line
@@ -90,6 +92,23 @@ pub struct RunView {
     pub phases: Vec<PhaseView>,
     /// The usage limits the agent last reported in this repository.
     pub limits: Option<RateLimits>,
+}
+
+/// The agent's output, its stderr and the checks' output of a phase, when the
+/// files exist, as paths relative to the repository.
+fn existing_logs(run: &Run, phase: usize, attempt: u32) -> Vec<String> {
+    if attempt == 0 {
+        return Vec::new();
+    }
+    [
+        run.paths.agent_stdout_log(phase, attempt),
+        run.paths.agent_stderr_log(phase, attempt),
+        run.paths.verify_log(phase),
+    ]
+    .into_iter()
+    .filter(|path| path.is_file())
+    .map(|path| path_in(run.git.root(), &path).display().to_string())
+    .collect()
 }
 
 pub fn load_run_view(run: &Run) -> RunView {
@@ -126,6 +145,7 @@ pub fn load_run_view(run: &Run) -> RunView {
                 .as_ref()
                 .map(|f| failure_kind_words(f.kind).to_string()),
             failure_detail: p.failure.as_ref().map(|f| f.detail.clone()),
+            logs: existing_logs(run, p.number, p.attempts),
         })
         .collect();
     RunView {
