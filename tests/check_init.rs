@@ -173,6 +173,21 @@ fn init_refuses_a_dangling_plan_symlink() {
 }
 
 #[test]
+fn a_repository_git_refuses_is_not_called_a_missing_one() {
+    let repo = TestRepo::new();
+    let out = repo
+        .phasewise()
+        .arg("init")
+        .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        .output()
+        .expect("run init");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("dubious ownership"), "{stderr}");
+    assert!(!stderr.contains("Not inside a git repository"), "{stderr}");
+}
+
+#[test]
 fn init_outside_repo_exits_1() {
     let dir = tempfile::tempdir().expect("temp dir");
     assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("phasewise"))

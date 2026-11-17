@@ -33,11 +33,24 @@ impl Git {
             .arg(dir)
             .args(["rev-parse", "--show-toplevel"])
             .env("GIT_OPTIONAL_LOCKS", "0")
+            // The message is read below: keep it in English.
+            .env("LC_ALL", "C")
             .output()
             .context("Cannot run `git`. Install git and make sure it is on your PATH.")?;
         if !output.status.success() {
+            let why = String::from_utf8_lossy(&output.stderr);
+            let why = why.trim();
+            // Only a directory that is not in a repository is that: git also
+            // refuses a repository of another owner (`safe.directory`), and
+            // `git init` would be the wrong advice then.
+            if why.is_empty() || why.contains("not a git repository") {
+                return Err(anyhow!(
+                    "Not inside a git repository. Run `git init` or move into a repository."
+                ));
+            }
             return Err(anyhow!(
-                "Not inside a git repository. Run `git init` or move into a repository."
+                "git cannot use the repository at {}: {why}",
+                dir.display()
             ));
         }
         let root = String::from_utf8_lossy(&output.stdout).trim().to_string();

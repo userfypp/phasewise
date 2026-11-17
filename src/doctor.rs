@@ -140,10 +140,18 @@ fn repository_lines(cwd: &Path, found: &[AgentKind], lines: &mut Vec<String>) ->
     let mut plan_agents_ok = true;
     let git = match Git::discover(cwd) {
         Ok(git) => git,
-        Err(_) => {
-            lines.push(
-                "  ✗ not inside a git repository; run `git init` (then commit) here".to_string(),
-            );
+        Err(err) => {
+            let text = err.to_string();
+            lines.push(if text.starts_with("Not inside a git repository") {
+                "  ✗ not inside a git repository; run `git init` (then commit) here".to_string()
+            } else {
+                format!(
+                    "  ✗ {}",
+                    text.lines()
+                        .next()
+                        .unwrap_or("git cannot use this repository")
+                )
+            });
             return true;
         }
     };
