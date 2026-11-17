@@ -25,9 +25,10 @@ cargo install --path .
 Then run `phasewise doctor` inside your project. It checks git, both agents
 (installed, version and whether they are logged in) and whether the repository
 is ready (a first commit, a branch checked out, a clean working tree, a valid
-plan). It exits `1` when git, both agents or any repository check fails. A login
-that is not confirmed, or a plan whose own agent is not installed (`run --agent`
-can override it), is a warning, not an error.
+plan). It exits `1` when git is missing, neither agent is installed, a phase that
+sets its own `agent` names one that is not installed, or a repository check
+fails. A login that is not confirmed, or a plan whose default agent is not
+installed (`run --agent` can override it), is a warning, not an error.
 
 ## How it works
 
@@ -234,7 +235,11 @@ time, cost and changed files, `-` where unknown, plus the agent when the plan
 mixes agents), the plan's checks and the totals. It uses only what the run
 stored, so the same run gives the same text. The numbers are those of
 `phasewise status`. `--output report.md` writes the file instead (atomically);
-it refuses to overwrite an existing file unless you pass `--force`.
+it refuses to overwrite an existing file unless you pass `--force`. A file
+inside the repository that git does not ignore stops `phasewise next` (the
+working tree is no longer clean) and is deleted by `retry` and `rollback`, so
+`report` says so; write it outside the repository, or list it in
+`.git/info/exclude`.
 
 ```markdown
 # Add the report command
@@ -333,7 +338,7 @@ terminal UI.
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
 | `phasewise settings [set KEY VALUE \| reset [KEY]]` | Shows, changes or resets your [settings](#settings). |
-| `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. |
+| `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. See [Shell completions](#shell-completions). |
 | `phasewise abort` | Abandons the run and returns to the original branch. |
 
 `--auto` approves every phase that passes its checks and continues until the
@@ -351,6 +356,40 @@ it; naming the plan's own agent changes nothing, so its phase blocks still apply
 
 Exit codes: `0` success, `1` usage or environment error, `3` a phase ended
 failed, `130` stopped by a second Ctrl-C.
+
+## Shell completions
+
+`phasewise completions SHELL` prints a script that completes subcommands, options and
+their values. Install it once, then open a new shell.
+
+**bash**: add this line to `~/.bashrc`. Use `eval`: `source <(…)` does not work in the
+bash 3.2 that macOS ships.
+
+```sh
+eval "$(phasewise completions bash)"
+```
+
+**zsh**: save the script in a directory of your `fpath` and make sure `compinit` runs
+after that directory is added, in `~/.zshrc`:
+
+```sh
+mkdir -p ~/.zfunc
+phasewise completions zsh > ~/.zfunc/_phasewise
+```
+
+```sh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+**fish**: fish loads every file in its completions directory.
+
+```sh
+phasewise completions fish > ~/.config/fish/completions/phasewise.fish
+```
+
+elvish and powershell scripts are generated too, but this guide does not cover them.
+Regenerate the script after you update phasewise, so that new options complete.
 
 ## Settings
 
@@ -436,7 +475,10 @@ Environment variables:
   then retry.
 - **phasewise or the terminal was closed during a phase**: the agent is
   stopped, and the next phasewise command marks the phase as failed
-  (interrupted). Retry it.
+  (interrupted). Retry it. If phasewise was killed outright (`kill -9`) and the
+  agent kept running, that command stops the agent first, and the phase's
+  failure says so. If it cannot tell that the process is the agent, it leaves
+  it alone and the failure gives the `kill` command to run before retrying.
 - **Ctrl-C**: in commands, the first one stops the agent and marks the phase
   interrupted; a second one kills everything phasewise started and exits with
   130. On the screens, Ctrl-C works like `q`; while the screen says

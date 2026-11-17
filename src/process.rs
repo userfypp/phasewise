@@ -131,13 +131,7 @@ impl GroupChild {
     /// `TERM` to the group; if anything was there, wait up to `grace` for the
     /// group to disappear, then `KILL`.
     pub fn finish_leftovers(&mut self, grace: Duration) {
-        if signal_group(self.pgid, "TERM") {
-            let deadline = Instant::now() + grace;
-            while group_exists(self.pgid) && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(20));
-            }
-            signal_group(self.pgid, "KILL");
-        }
+        stop_group(self.pgid, grace);
         self.finish();
     }
 
@@ -229,7 +223,7 @@ impl Default for ParentWatch {
 const GROUP_PROBE: &str = "kill -s 0 -- \"-$1\"";
 
 /// Whether any process of the group still exists.
-fn group_exists(pgid: u32) -> bool {
+pub fn group_exists(pgid: u32) -> bool {
     Command::new("sh")
         .args(["-c", GROUP_PROBE, "sh"])
         .arg(pgid.to_string())
@@ -239,6 +233,64 @@ fn group_exists(pgid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+/// `TERM` to the group; if anything was there, waits up to `grace` for the
+/// group to disappear, then `KILL`. Returns whether anything was there.
+pub fn stop_group(pgid: u32, grace: Duration) -> bool {
+    if !signal_group(pgid, "TERM") {
+        return false;
+    }
+    let deadline = Instant::now() + grace;
+    while group_exists(pgid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    signal_group(pgid, "KILL");
+    true
+}
+
+/// What can be said about the process that led a group, from `ps`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Leader {
+    /// It exists and started at this time, as `ps` prints it.
+    Started(String),
+    /// `ps` works and there is no such process.
+    Gone,
+    /// `ps` is missing or does not understand the question.
+    Unknown,
+}
+
+/// The start time of a process, which tells it from another one that was
+/// given the same PID later.
+pub fn leader(pid: u32) -> Leader {
+    fn start_time(pid: u32) -> Option<(bool, String)> {
+        let out = Command::new("ps")
+            .args(["-o", "lstart=", "-p"])
+            .arg(pid.to_string())
+            // The same text whatever the time zone of the caller.
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some((out.status.success(), text))
+    }
+    if pid == 0 || i32::try_from(pid).is_err() {
+        return Leader::Gone;
+    }
+    match start_time(pid) {
+        Some((true, text)) if !text.is_empty() => Leader::Started(text),
+        // "No such process" counts only if `ps` can see this very process.
+        Some(_) if matches!(start_time(std::process::id()), Some((true, t)) if !t.is_empty()) => {
+            Leader::Gone
+        }
+        _ => Leader::Unknown,
+    }
 }
 
 /// Sends `signal` (for example `TERM`) to every process of the group.

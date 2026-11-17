@@ -51,6 +51,24 @@ fn start_stubborn_run(repo: &TestRepo, logs: &Path) -> (Child, u32) {
     }
 }
 
+/// The file that records the agent's process group, once phasewise has
+/// written it (a moment after the agent starts).
+fn wait_for_group_record(repo: &TestRepo) -> std::path::PathBuf {
+    let id = repo.read(".phasewise/current");
+    let record = repo
+        .path()
+        .join(format!(".phasewise/runs/{}/agent.group", id.trim()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !record.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the agent's group was not recorded"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    record
+}
+
 fn send_term(pid: u32) {
     let status = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
@@ -119,6 +137,64 @@ fn second_signal_kills_everything_and_exits_130() {
         wait_dead(agent, Duration::from_secs(2)),
         "agent still alive"
     );
+}
+
+#[test]
+fn a_killed_phasewise_leaves_no_agent_running_after_the_next_command() {
+    let repo = TestRepo::new();
+    let logs = tempfile::tempdir().expect("log dir");
+    let (mut child, agent) = start_stubborn_run(&repo, logs.path());
+    wait_for_group_record(&repo);
+    // Nothing can clean up after SIGKILL: the agent is left behind.
+    child.kill().expect("kill phasewise");
+    child.wait().expect("reap phasewise");
+    assert!(is_alive(agent), "the agent should have outlived phasewise");
+
+    // Any command that loads the run stops it before anything else can touch
+    // the tree. This agent ignores TERM, so it takes the KILL after the grace.
+    let status = phasewise_command(&repo)
+        .arg("status")
+        .output()
+        .expect("run status");
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let stopped = wait_dead(agent, Duration::from_secs(10));
+    if !stopped {
+        // Do not leave it running for the 30 seconds it would take to end.
+        let _ = Command::new("kill")
+            .args(["-KILL", &agent.to_string()])
+            .status();
+    }
+    assert!(stopped, "the leftover agent was not stopped");
+
+    let id = repo.read(".phasewise/current");
+    let dir = format!(".phasewise/runs/{}", id.trim());
+    let state: serde_json::Value =
+        serde_json::from_str(&repo.read(&format!("{dir}/state.json"))).expect("state is JSON");
+    assert_eq!(state["phases"][0]["failure"]["kind"], "interrupted");
+    let detail = state["phases"][0]["failure"]["detail"]
+        .as_str()
+        .expect("detail");
+    assert!(
+        detail.contains("its agent was still running and has been stopped"),
+        "{detail}"
+    );
+    assert!(!repo.path().join(&dir).join("agent.group").exists());
+}
+
+#[test]
+fn a_finished_phase_leaves_no_group_record() {
+    let repo = TestRepo::new();
+    let logs = tempfile::tempdir().expect("log dir");
+    let (mut child, agent) = start_stubborn_run(&repo, logs.path());
+    let record = wait_for_group_record(&repo);
+    send_term(child.id());
+    wait_exit(&mut child, Duration::from_secs(30));
+    assert!(wait_dead(agent, Duration::from_secs(2)));
+    assert!(!record.exists(), "removed once the agent is gone");
 }
 
 #[test]

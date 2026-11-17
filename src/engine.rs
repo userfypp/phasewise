@@ -19,7 +19,8 @@ use crate::plan::{AgentKind, Plan};
 use crate::process::{GroupChild, spawn_in_group};
 use crate::prompt;
 use crate::state::{
-    Failure, FailureKind, PhaseStatus, RateLimits, RunPaths, RunState, truncate_summary,
+    Failure, FailureKind, PhaseStatus, RateLimits, RunPaths, RunState, record_group,
+    truncate_summary,
 };
 use crate::verify::{self, VerifyEvent, VerifyOutcome};
 
@@ -231,6 +232,10 @@ enum Reader {
 pub struct AgentSession<'a> {
     /// Command line, with the working directory set; stdio is configured here.
     pub command: Command,
+    /// Where to record the agent's process group while it runs, so that a
+    /// later phasewise can stop it if this one is killed (see
+    /// `state::record_group`).
+    pub group_file: Option<&'a Path>,
     /// Written to the agent's stdin.
     pub prompt: String,
     /// Raw stdout lines go here.
@@ -455,8 +460,10 @@ fn run_agent(
     };
     let stdout_log = ctx.paths.agent_stdout_log(phase, attempt);
     let stderr_log = ctx.paths.agent_stderr_log(phase, attempt);
+    let group_file = ctx.paths.group_file();
     let session = AgentSession {
         command,
+        group_file: Some(&group_file),
         prompt: launch.prompt.clone(),
         stdout_log: &stdout_log,
         stderr_log: &stderr_log,
@@ -485,6 +492,7 @@ pub fn run_agent_session(
 ) -> Result<AgentRun> {
     let AgentSession {
         mut command,
+        group_file,
         prompt,
         stdout_log,
         stderr_log,
@@ -511,6 +519,9 @@ pub fn run_agent_session(
         }
     };
 
+    if let Some(path) = group_file {
+        record_group(path, child.id());
+    }
     if let Some(mut stdin) = child.take_stdin() {
         // A broken pipe only means the agent stopped reading; its exit status tells the rest.
         thread::spawn(move || {
@@ -523,7 +534,14 @@ pub fn run_agent_session(
     } else {
         let _ = tx.send(Reader::Eof);
     }
-    follow_agent(&mut child, &rx, timeout, kill_grace, cancel, on_event)
+    let run = follow_agent(&mut child, &rx, timeout, kill_grace, cancel, on_event);
+    // Dropping the child kills whatever `follow_agent` left; after that there
+    // is nothing for recovery to stop.
+    drop(child);
+    if let Some(path) = group_file {
+        let _ = std::fs::remove_file(path);
+    }
+    run
 }
 
 /// Reader thread: raw lines to the log, parsed events to the engine loop.
