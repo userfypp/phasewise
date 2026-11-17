@@ -978,6 +978,29 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn an_error_from_a_tool_shows_no_escape_sequences() {
+        let mut home = home(valid_plan());
+        home.commit_finished(&Err(
+            "hook failed\n\u{1b}[31mred\u{1b}[0m\tafter the tab".into()
+        ));
+        let text = format!("{}", render(&home).backend());
+        assert!(text.contains("\u{fffd}[31mred"), "{text}");
+        assert!(text.contains("after the tab"), "{text}");
+        assert!(!text.contains('\u{1b}'), "{text}");
+    }
+
+    #[test]
+    fn a_long_goal_shows_the_end_where_the_cursor_is() {
+        let mut home = home(valid_plan());
+        let goal = format!("{}THE END", "word ".repeat(300));
+        home.mode = Mode::GoalInput(goal);
+        // The smallest screen the TUI draws: the popup cannot show every line.
+        let text = format!("{}", render_sized(&home, 80, 24).backend());
+        assert!(text.contains("THE END█"), "{text}");
+        assert!(text.contains("↑ more"), "{text}");
+    }
+
+    #[test]
     fn commit_error_popup() {
         let mut home = home(valid_plan());
         home.commit_finished(&Err("pre-commit hook failed".into()));

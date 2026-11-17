@@ -13,8 +13,8 @@ use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, char_width, confirm_popup, dim, dim_join,
     draw_too_small, duration_text, elapsed_since, event_spans, footer_line, input_popup,
-    limit_spans, line_width, margin, notice_line, render_popup, role_style, settings_popup,
-    shortcuts_popup, text_width, truncate, wrap_text,
+    limit_spans, line_width, margin, notice_line, render_popup, role_style, sanitize,
+    settings_popup, shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -337,22 +337,6 @@ fn cut_columns(line: Line<'static>, skip: usize) -> Line<'static> {
         }
     }
     Line { spans, ..line }
-}
-
-/// Text for the content pane. The terminal buffer cannot hold control
-/// characters (ratatui drops them, so a tab would swallow the indentation and
-/// an escape sequence would leave its tail behind): a tab becomes 4 spaces,
-/// any other control character (ESC, DEL, CR, C1) becomes `\u{FFFD}`.
-fn sanitize(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\t' => out.push_str("    "),
-            c if c.is_control() => out.push('\u{FFFD}'),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 fn log_line(line: &LogLine) -> Line<'static> {
