@@ -1115,6 +1115,15 @@ impl Tui<'_> {
             Command::Next => self.spawn(|run, tx, cancel| {
                 ops::next(run, ops::Chain::One, &ops::Overrides::default(), tx, cancel)
             }),
+            Command::Until(stop) => self.spawn(move |run, tx, cancel| {
+                ops::next(
+                    run,
+                    ops::Chain::Until(stop),
+                    &ops::Overrides::default(),
+                    tx,
+                    cancel,
+                )
+            }),
             Command::Retry(note) => self.spawn(move |run, tx, cancel| {
                 ops::retry(run, note.as_deref(), &ops::Overrides::default(), tx, cancel)
                     .map(NextOutcome::Ran)

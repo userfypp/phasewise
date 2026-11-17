@@ -192,6 +192,7 @@ without a key. Then decide:
 | Key | Action |
 |---|---|
 | `n` | Approve the phase and run the next one. |
+| `u` | Approve and run phases up to the one you type (like `--until`). |
 | `r` | Retry: go back to the checkpoint before the phase and run it again in a new session. You can add a note for the agent. |
 | `b` | Roll back to the selected phase's checkpoint: later phases are discarded and become pending again. |
 | `f` | On a failed phase: open the whole failure (the list cuts it to eight lines) and the paths of the phase's logs, relative to the repository. `j`/`k` or the arrows scroll it; any other key closes it. |
@@ -528,12 +529,14 @@ all keys · `q` quit. While a plan is being written: `esc` stops it.
 the left and right arrows by 8 columns, `g`/`G` or `Home`/`End` jump to its top
 or bottom (`G` on the log of a running phase follows it again), `/` searches it
 (case-insensitive; an empty search clears it) and `]`/`[` go to the next and
-previous match · `n` approve · `r` retry · `a` accept your fixes of a failed
-phase · `b` roll back · `f` the whole failure and its logs · `d` open the
-phase's changes in `git difftool` (the screen is handed over until you close the
-tool; set one with `diff.tool`, see `git difftool --tool-help`) · `m` merge a
-completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
-all keys · `q` quit.
+previous match · `n` approve · `u` approve and run up to a phase you type, like
+`--until` (it stops there or at the first failure, and leaves that phase for
+review; a wrong number keeps the prompt open, `esc` cancels) · `r` retry · `a`
+accept your fixes of a failed phase · `b` roll back · `f` the whole failure and
+its logs · `d` open the phase's changes in `git difftool` (the screen is handed
+over until you close the tool; set one with `diff.tool`, see
+`git difftool --tool-help`) · `m` merge a completed run · `x` interrupt · `A`
+abandon · `esc` home · `s` settings · `?` all keys · `q` quit.
 
 **Lists and questions**: arrows or `j`/`k` move, `enter` or the row's number
 chooses, `esc` cancels; `y`/`n` answer confirmations. In text fields, `Ctrl-U`

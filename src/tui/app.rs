@@ -7,6 +7,7 @@ use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
     confirm_key, edit_text, help_key, help_scroll_max, item, paste_keys, picker_footer,
 };
+use crate::ops;
 use crate::settings::Settings;
 use crate::state::PhaseStatus;
 
@@ -53,6 +54,8 @@ pub enum Mode {
     ConfirmMerge(usize),
     /// Optional note for a retry, being typed.
     Note(String),
+    /// Last phase of a chained run, being typed.
+    Until(String),
     /// Text to look for in the right panel, being typed.
     Search(String),
     /// Popup listing every key.
@@ -68,6 +71,8 @@ pub enum Mode {
 pub enum Command {
     Quit,
     Next,
+    /// Approve and run phases up to this one (`ops::Chain::Until`).
+    Until(usize),
     Retry(Option<String>),
     /// Run the checks on the working tree of the failed phase and checkpoint it.
     Accept,
@@ -202,7 +207,7 @@ impl App {
     /// True while a text is being typed: a paste has somewhere to go.
     pub fn accepts_text(&self) -> bool {
         match &self.mode {
-            Mode::Note(_) | Mode::Search(_) => true,
+            Mode::Note(_) | Mode::Until(_) | Mode::Search(_) => true,
             Mode::Settings(panel) => panel.editing.is_some(),
             _ => false,
         }
@@ -253,6 +258,7 @@ impl App {
             }
             Mode::ConfirmMerge(row) => self.confirm(key, row, Mode::ConfirmMerge, Command::Merge),
             Mode::Note(buffer) => self.key_note(key, buffer),
+            Mode::Until(buffer) => self.key_until(key, buffer),
             Mode::Search(buffer) => self.key_search(key, buffer),
             Mode::Help => {
                 // Scrolling keys move the popup; any other key closes it.
@@ -326,6 +332,41 @@ impl App {
             _ => {
                 if edit_text(&mut buffer, key) {
                     self.mode = Mode::Note(buffer);
+                }
+            }
+        }
+        None
+    }
+
+    fn key_until(&mut self, key: KeyEvent, mut buffer: String) -> Option<Command> {
+        match key.code {
+            KeyCode::Enter => {
+                let checked = buffer
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "Type the number of a phase, like 3.".to_string())
+                    .and_then(|stop| {
+                        let first = self.first_with(PhaseStatus::Pending).unwrap_or(0);
+                        ops::check_until(stop, first, self.view.phases.len())
+                            .map(|()| stop)
+                            .map_err(|e| e.to_string())
+                    });
+                match checked {
+                    Ok(stop) => {
+                        self.mode = Mode::Normal;
+                        return Some(Command::Until(stop));
+                    }
+                    Err(why) => {
+                        // The popup stays open so the number can be fixed.
+                        self.message = Some(Notice::warn(why));
+                        self.mode = Mode::Until(buffer);
+                    }
+                }
+            }
+            KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {
+                if edit_text(&mut buffer, key) {
+                    self.mode = Mode::Until(buffer);
                 }
             }
         }
@@ -500,6 +541,13 @@ impl App {
                 None => Some(Command::Next),
                 Some(why) => self.refuse(why),
             },
+            KeyCode::Char('u') => match self.why_not_until() {
+                None => {
+                    self.mode = Mode::Until(String::new());
+                    None
+                }
+                Some(why) => self.refuse(why),
+            },
             KeyCode::Char('r') => match self.why_not_retry() {
                 None => {
                     self.mode = Mode::Note(String::new());
@@ -621,6 +669,15 @@ impl App {
         (!can).then(|| "No phase is left to run.".to_string())
     }
 
+    /// `u` needs what `n` needs, and a pending phase for the chain to run.
+    fn why_not_until(&self) -> Option<String> {
+        self.why_not_next().or_else(|| {
+            self.first_with(PhaseStatus::Pending)
+                .is_none()
+                .then(|| "No phase is left to run after this one.".to_string())
+        })
+    }
+
     fn why_not_retry(&self) -> Option<String> {
         if !self.view.active {
             return Some("The run is not active: nothing to retry.".to_string());
@@ -704,6 +761,7 @@ impl App {
             | Mode::ConfirmAbandon(_)
             | Mode::ConfirmMerge(_) => return picker_footer(2),
             Mode::Note(_) => return vec![item("enter", "retry"), item("esc", "cancel")],
+            Mode::Until(_) => return vec![item("enter", "run"), item("esc", "cancel")],
             Mode::Search(_) => return vec![item("enter", "search"), item("esc", "cancel")],
             Mode::Help | Mode::Failure => return vec![item("j/k", "scroll")],
             Mode::Normal => {}
@@ -721,6 +779,7 @@ impl App {
         } else if self.view.active && status == Some(PhaseStatus::AwaitingReview) {
             keys.extend([
                 item("n", "approve"),
+                item("u", "run until"),
                 item("r", "retry"),
                 item("b", "roll back"),
             ]);
@@ -734,6 +793,9 @@ impl App {
         } else if self.view.completed {
             keys.extend([item("m", "merge"), item("j/k", "phase")]);
         } else {
+            if self.why_not_until().is_none() {
+                keys.push(item("u", "run until"));
+            }
             keys.push(item("j/k", "phase"));
         }
         keys.extend(tail);
@@ -756,6 +818,7 @@ impl App {
                 "Run",
                 vec![
                     ("n", "approve the phase and run the next one"),
+                    ("u", "approve and run phases up to a chosen one"),
                     ("r", "retry the phase, with an optional note"),
                     ("a", "accept your fixes of the failed phase"),
                     ("b", "roll back to the checkpoint of the phase"),
@@ -970,6 +1033,92 @@ mod tests {
         assert!(a.message.is_none());
     }
 
+    fn four_phases() -> App {
+        app(vec![
+            phase(1, PhaseStatus::Done, true),
+            phase(2, PhaseStatus::AwaitingReview, true),
+            phase(3, PhaseStatus::Pending, false),
+            phase(4, PhaseStatus::Pending, false),
+        ])
+    }
+
+    fn type_text(a: &mut App, text: &str) {
+        for c in text.chars() {
+            a.handle_key(key(c));
+        }
+    }
+
+    #[test]
+    fn until_opens_the_popup_and_a_valid_phase_sends_the_chain() {
+        let mut a = four_phases();
+        assert_eq!(a.handle_key(key('u')), None);
+        assert_eq!(a.mode, Mode::Until(String::new()));
+        type_text(&mut a, "4");
+        assert_eq!(a.handle_key(code(KeyCode::Enter)), Some(Command::Until(4)));
+        assert_eq!(a.mode, Mode::Normal);
+        // The first pending phase is a valid stop too.
+        a.handle_key(key('u'));
+        type_text(&mut a, " 3 ");
+        assert_eq!(a.handle_key(code(KeyCode::Enter)), Some(Command::Until(3)));
+    }
+
+    #[test]
+    fn until_rejects_a_bad_phase_and_keeps_the_popup_open() {
+        let mut a = four_phases();
+        for bad in ["", "x", "2", "5", "0", "-1"] {
+            a.handle_key(key('u'));
+            type_text(&mut a, bad);
+            assert_eq!(a.handle_key(code(KeyCode::Enter)), None, "{bad:?}");
+            assert_eq!(a.mode, Mode::Until(bad.into()), "{bad:?}");
+            assert!(a.message.is_some(), "{bad:?}");
+            a.handle_key(code(KeyCode::Esc));
+            a.message = None;
+        }
+        // The number can be fixed in place.
+        a.handle_key(key('u'));
+        type_text(&mut a, "9");
+        a.handle_key(code(KeyCode::Enter));
+        a.handle_key(code(KeyCode::Backspace));
+        type_text(&mut a, "4");
+        assert_eq!(a.handle_key(code(KeyCode::Enter)), Some(Command::Until(4)));
+    }
+
+    #[test]
+    fn until_esc_cancels() {
+        let mut a = four_phases();
+        a.handle_key(key('u'));
+        type_text(&mut a, "4");
+        assert_eq!(a.handle_key(code(KeyCode::Esc)), None);
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn until_is_refused_when_next_is_or_nothing_is_pending() {
+        let mut running = four_phases();
+        running.running = Some(2);
+        running.handle_key(key('u'));
+        assert_eq!(running.mode, Mode::Normal);
+        assert!(running.message.is_some());
+
+        let mut failed = failed_app();
+        failed.handle_key(key('u'));
+        assert_eq!(failed.mode, Mode::Normal);
+        assert!(failed.message.is_some());
+
+        let mut last = reviewing();
+        last.view.phases[2].status = PhaseStatus::Done;
+        last.handle_key(key('u'));
+        assert_eq!(last.mode, Mode::Normal);
+        assert!(last.message.is_some());
+    }
+
+    #[test]
+    fn until_is_in_the_footer_and_the_shortcuts() {
+        assert!(four_phases().footer().iter().any(|i| i.0 == "u"));
+        let groups = App::shortcuts();
+        assert!(groups.iter().flat_map(|(_, r)| r).any(|(k, _)| *k == "u"));
+    }
+
     #[test]
     fn retry_opens_the_note_and_enter_sends_it() {
         let mut a = reviewing();
@@ -1157,7 +1306,7 @@ mod tests {
     #[test]
     fn footer_follows_the_state() {
         let a = reviewing();
-        assert_eq!(keys(&a), ["n", "r", "b", "tab", "esc", "q", "s"]);
+        assert_eq!(keys(&a), ["n", "u", "r", "b", "tab", "esc", "q", "s"]);
         let mut running = reviewing();
         running.running = Some(3);
         assert_eq!(keys(&running), ["x", "tab", "esc", "q", "s"]);
@@ -1168,7 +1317,7 @@ mod tests {
         assert_eq!(keys(&failed), ["r", "a", "b", "f", "tab", "esc", "q", "s"]);
         let mut other = reviewing();
         other.selected = 0;
-        assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);
+        assert_eq!(keys(&other), ["u", "j/k", "tab", "esc", "q", "s"]);
         other.view.active = false;
         other.selected = 1;
         assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);

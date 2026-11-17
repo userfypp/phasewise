@@ -541,6 +541,20 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) -> usize {
             buffer,
             area.width,
         ),
+        Mode::Until(buffer) => input_popup(
+            "Run until phase",
+            &format!(
+                "A phase from {} to {}. Each phase is approved and the next one runs, stopping at the chosen phase or at the first failure; the chosen phase is left for review.",
+                app.view
+                    .phases
+                    .iter()
+                    .find(|p| p.status == PhaseStatus::Pending)
+                    .map_or(0, |p| p.number),
+                app.view.phases.len()
+            ),
+            buffer,
+            area.width,
+        ),
         Mode::Note(buffer) => input_popup(
             &format!("Retry phase {}", retry_target(app)),
             "Optional note for the agent, added to the prompt.",
@@ -667,6 +681,7 @@ pub(super) mod tests {
             Mode::ConfirmAbandon(0),
             Mode::ConfirmMerge(0),
             Mode::Note("a note with some words in it".into()),
+            Mode::Until("3".into()),
             Mode::Search("needle".into()),
             Mode::Settings(SettingsPanel::new(Settings::default())),
         ];
@@ -882,7 +897,7 @@ pub(super) mod tests {
     fn shortcuts_popup() {
         let mut app = app();
         app.mode = Mode::Help;
-        insta::assert_snapshot!(render(&mut app, 100, 32).backend());
+        insta::assert_snapshot!(render(&mut app, 100, 33).backend());
     }
 
     #[test]
@@ -954,6 +969,13 @@ pub(super) mod tests {
     fn note_input_popup() {
         let mut app = app();
         app.mode = Mode::Note("handle empty input".into());
+        insta::assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn until_input_popup() {
+        let mut app = app();
+        app.mode = Mode::Until("3".into());
         insta::assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
@@ -1092,7 +1114,7 @@ pub(super) mod tests {
     fn the_shortcuts_popup_lists_the_right_panel_keys() {
         let mut app = app();
         app.mode = Mode::Help;
-        let rows: Vec<String> = format!("{}", render(&mut app, 80, 32).backend())
+        let rows: Vec<String> = format!("{}", render(&mut app, 80, 33).backend())
             .lines()
             .map(str::to_string)
             .collect();
