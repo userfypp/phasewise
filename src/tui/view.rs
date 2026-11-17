@@ -13,8 +13,8 @@ use super::shared::spinner;
 use super::widgets::{
     MIN_HEIGHT, MIN_WIDTH, accent, accent_bold, bold, char_width, confirm_popup, dim, dim_join,
     draw_too_small, duration_text, elapsed_since, event_spans, footer_line, input_popup,
-    limit_spans, line_width, margin, notice_line, render_popup, role_style, settings_popup,
-    shortcuts_popup, text_width, truncate, wrap_text,
+    limit_spans, line_width, margin, notice_line, render_popup, role_style, sanitize,
+    settings_popup, shortcuts_popup, text_width, truncate, wrap_text,
 };
 use crate::display::{money, status_label};
 use crate::state::PhaseStatus;
@@ -339,22 +339,6 @@ fn cut_columns(line: Line<'static>, skip: usize) -> Line<'static> {
     Line { spans, ..line }
 }
 
-/// Text for the content pane. The terminal buffer cannot hold control
-/// characters (ratatui drops them, so a tab would swallow the indentation and
-/// an escape sequence would leave its tail behind): a tab becomes 4 spaces,
-/// any other control character (ESC, DEL, CR, C1) becomes `\u{FFFD}`.
-fn sanitize(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\t' => out.push_str("    "),
-            c if c.is_control() => out.push('\u{FFFD}'),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 fn log_line(line: &LogLine) -> Line<'static> {
     match line {
         LogLine::Attempt { number, resumed } => Line::styled(
@@ -642,6 +626,51 @@ pub(super) mod tests {
             untracked: vec!["notes.txt".into()],
             note: None,
         };
+    }
+
+    /// Sizes for the sweeps: every one up to a few cells (the "too small"
+    /// message), and a spread around the smallest size the screens draw at.
+    pub(in crate::tui) fn sizes() -> Vec<(u16, u16)> {
+        let small = (0..=8).flat_map(|w| (0..=8).map(move |h| (w, h)));
+        let around_the_minimum = [MIN_WIDTH - 1, MIN_WIDTH, MIN_WIDTH + 1, 100, 140, 300]
+            .into_iter()
+            .flat_map(|w| {
+                [MIN_HEIGHT - 1, MIN_HEIGHT, MIN_HEIGHT + 1, 30, 60]
+                    .into_iter()
+                    .map(move |h| (w, h))
+            });
+        small.chain(around_the_minimum).collect()
+    }
+
+    #[test]
+    fn no_mode_panics_at_any_size() {
+        use crate::tui::app::Mode;
+        let modes = [
+            Mode::Normal,
+            Mode::Help,
+            Mode::ConfirmRollback(1, 0),
+            Mode::ConfirmInterrupt(0),
+            Mode::ConfirmQuit(0),
+            Mode::ConfirmAbandon(0),
+            Mode::ConfirmMerge(0),
+            Mode::Note("a note with some words in it".into()),
+            Mode::Search("needle".into()),
+            Mode::Settings(SettingsPanel::new(Settings::default())),
+        ];
+        for mode in modes {
+            for tab in Tab::ALL {
+                let mut app = app();
+                with_diff(&mut app);
+                app.tab = tab;
+                app.mode = mode.clone();
+                app.message = Some(Notice::warn(
+                    "A message that is long enough to wrap, probably",
+                ));
+                for (width, height) in sizes() {
+                    render(&mut app, width, height);
+                }
+            }
+        }
     }
 
     #[test]

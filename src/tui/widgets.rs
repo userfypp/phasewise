@@ -541,12 +541,30 @@ pub fn input_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// Text for the content pane. The terminal buffer cannot hold control
+/// characters (ratatui drops them, so a tab would swallow the indentation and
+/// an escape sequence would leave its tail behind): a tab becomes 4 spaces,
+/// any other control character (ESC, DEL, CR, C1) becomes `\u{FFFD}`.
+pub fn sanitize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("    "),
+            c if c.is_control() => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// A text-input popup.
 pub fn input_popup(title: &str, description: &str, text: &str, screen_width: u16) -> Popup {
     let popup = Popup::new(title).description(description);
     let width = popup.text_room(screen_width).min(60);
     let body = input_lines(text, width);
-    popup.body(body)
+    // On a short screen the end of the text, where the cursor is, stays in
+    // view (the popup clamps this to the end of the body).
+    popup.body(body).scroll(usize::MAX)
 }
 
 /// A two-row confirmation: description (optional), then the action and the
@@ -576,6 +594,9 @@ pub fn confirm_popup(
 pub fn error_popup(lines: &[String], screen_width: u16) -> Popup {
     let mut popup = Popup::new("");
     popup.max_width = ERROR_WIDTH;
+    // The text of an error can come from a hook or a tool: ratatui would drop
+    // its control characters and leave the rest of an escape sequence behind.
+    let lines: Vec<String> = lines.iter().map(|l| sanitize(l)).collect();
     let title = lines.first().map_or("Error", String::as_str);
     popup.title = Line::styled(format!("✗ {title}"), role_style(Role::Fail));
     let room = popup.text_room(screen_width);

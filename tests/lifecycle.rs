@@ -139,11 +139,39 @@ fn report_summarizes_the_run_on_stdout_and_in_a_file() {
     let written = env.ok(&["report", "--output", "report.md"], &[]);
     assert!(written.stdout.contains("Report written to report.md"));
     assert_eq!(env.repo.read("report.md"), *text);
+    // In the repository and not ignored: it would stop `next`.
+    assert!(
+        written
+            .stderr
+            .contains("report.md is inside the repository"),
+        "{}",
+        written.stderr
+    );
 
     let again = env.exec(&["report", "--output", "report.md"], &[]);
     assert_eq!(again.code, 1, "{}", again.stdout);
     assert!(again.stderr.contains("already exists"), "{}", again.stderr);
     env.ok(&["report", "--output", "report.md", "--force"], &[]);
+}
+
+#[test]
+fn report_says_nothing_about_a_file_that_cannot_get_in_the_way() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    // Ignored by git: neither `next` nor `retry` touch it.
+    env.repo.write(".git/info/exclude", "ignored-report.md\n");
+    let ignored = env.ok(&["report", "--output", "ignored-report.md"], &[]);
+    assert!(!ignored.stderr.contains("Note:"), "{}", ignored.stderr);
+    // Outside the repository.
+    let elsewhere = tempfile::tempdir().expect("temp dir");
+    let path = elsewhere.path().join("report.md");
+    let outside = env.ok(&["report", "--output", path.to_str().expect("utf-8")], &[]);
+    assert!(!outside.stderr.contains("Note:"), "{}", outside.stderr);
+    // The run's own directory.
+    let own = env.ok(&["report", "--output", ".phasewise/report.md"], &[]);
+    assert!(!own.stderr.contains("Note:"), "{}", own.stderr);
+    // And the run goes on.
+    env.ok(&["next"], &[]);
 }
 
 #[test]
