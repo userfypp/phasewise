@@ -291,7 +291,10 @@ TUI: the run screen when the current run is active, the home screen otherwise.
   through a channel. Every turn, the loop drains the channels, joins finished
   workers, reloads what changed (run data at most every 250 ms; the home data
   every 2 seconds, on a thread) and redraws only when something changed, or
-  every 120 ms while a spinner shows. A periodic home reload is dropped if,
+  every 120 ms while a spinner shows. While no worker of its own runs, the
+  run screen also compares a `RunStamp` (the current run and the time and
+  size of its `state.json`) once a second and reloads when another process
+  changed the run; if the run is gone, the screen closes. A periodic home reload is dropped if,
   when it arrives, a popup is open, a commit is running or an explicit reload
   happened since it started.
 - **Quitting** with work in progress asks first; yes cancels every worker and

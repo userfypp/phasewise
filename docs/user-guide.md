@@ -197,7 +197,10 @@ without a key. Then decide:
 | `esc` | Back to the home screen. The run keeps going if a phase is running. |
 
 The same actions exist as commands: `phasewise next`, `retry --note "…"`,
-`rollback N`, `merge`, `diff [N]` and `status`.
+`rollback N`, `merge`, `diff [N]` and `status`. The screen follows them when
+you run them in another terminal: it checks the run about once a second (no
+key needed) and reloads when it changed, unless a phase it started is running.
+If the run's files are removed, it goes back to the home screen.
 
 **Abandoning a run** stops it for good. Uncommitted changes are saved in a
 commit on the run branch, which is kept, and you go back to your original
