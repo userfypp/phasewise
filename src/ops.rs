@@ -1590,8 +1590,9 @@ fn check_plan_answer(
         return Err((None, vec![problem]));
     }
     let Some(text) = run.final_text.as_deref().and_then(prompt::extract_plan) else {
+        // The answer is kept as a draft: it is all there is to look at.
         return Err((
-            None,
+            run.final_text.clone().filter(|t| !t.trim().is_empty()),
             vec![format!(
                 "the answer has no plan between a line `{}` and a line `{}`",
                 prompt::PLAN_START,

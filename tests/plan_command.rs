@@ -193,6 +193,18 @@ fn missing_markers_and_agent_failure_are_repaired_or_reported() {
     assert_eq!(out.code, 1);
     assert!(out.stderr.contains("no plan between"), "{}", out.stderr);
     assert!(!env.repo.path().join("phasewise.md").exists());
+    // What the agent answered is kept, so there is something to read.
+    let drafts = env.repo.path().join(".phasewise/plans");
+    let kept = std::fs::read_dir(&drafts)
+        .expect("plans dir")
+        .flatten()
+        .flat_map(|plan| std::fs::read_dir(plan.path()).expect("plan dir").flatten())
+        .any(|f| {
+            f.file_name().to_string_lossy().starts_with("draft-")
+                && std::fs::read_to_string(f.path())
+                    .is_ok_and(|t| t.contains("I forgot the markers"))
+        });
+    assert!(kept, "the answer without markers must be saved as a draft");
 
     let env = Env::new();
     let out = env.exec(&["goal"], &[("FAKE_PLAN_MODE", "fail")]);

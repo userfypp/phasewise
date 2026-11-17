@@ -51,6 +51,31 @@ fn init_shows_a_relative_path_and_mentions_the_home_screen() {
 }
 
 #[test]
+fn init_from_a_subdirectory_names_the_file_to_edit_where_it_is() {
+    let repo = TestRepo::new();
+    repo.write("sub/.keep", "");
+    let sub = repo.path().join("sub");
+    let out = repo
+        .phasewise()
+        .current_dir(&sub)
+        .arg("init")
+        .output()
+        .expect("run init");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // `sub/` has no phasewise.md: the step must not send the user to one.
+    let plan = repo
+        .path()
+        .canonicalize()
+        .expect("canonical path")
+        .join("phasewise.md");
+    assert!(
+        stdout.contains(&format!("Edit {} to describe", plan.display())),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn check_reports_errors_with_lines() {
     let repo = TestRepo::new();
     repo.write("bad.md", "# T\n\n## A\n\n## B\n\ntext\n");

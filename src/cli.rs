@@ -662,7 +662,10 @@ fn init() -> Result<ExitCode> {
     }
     outln!();
     outln!("Next steps:");
-    outln!("  1. Edit {PLAN_FILE} to describe your phases.");
+    outln!(
+        "  1. Edit {} to describe your phases.",
+        shown_path(&path).display()
+    );
     outln!("  2. Commit it (`phasewise run` needs a clean working tree).");
     outln!("  3. phasewise check");
     outln!("  4. phasewise run");
