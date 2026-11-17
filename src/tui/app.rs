@@ -371,9 +371,15 @@ impl App {
     }
 
     fn key_normal(&mut self, key: KeyEvent) -> Option<Command> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // A control key is never a command but Ctrl-C: a habit from the shell
+        // (Ctrl-N, Ctrl-R, Ctrl-L) must not approve a phase and start the next
+        // one, open the retry note or scroll the panel. Same as the home screen.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return (key.code == KeyCode::Char('c'))
+                .then(|| self.quit())
+                .flatten();
+        }
         match key.code {
-            KeyCode::Char('c') if ctrl => self.quit(),
             KeyCode::Char('q') => self.quit(),
             KeyCode::Esc => Some(Command::Home),
             KeyCode::Char('A') => self.abandon(),
@@ -1304,6 +1310,26 @@ mod tests {
         a.hscroll = 16;
         a.handle_key(key('j'));
         assert_eq!((a.scroll, a.hscroll), (0, 0));
+    }
+
+    #[test]
+    fn control_keys_other_than_ctrl_c_do_nothing() {
+        let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let mut a = reviewing();
+        // Phase 2 awaits review and is selected: plain `n` approves it, Ctrl-N
+        // is not that.
+        for c in [
+            'n', 'r', 'b', 'm', 'x', 'l', 'h', 'j', 'k', 'g', 'G', 's', '/', '?',
+        ] {
+            assert_eq!(a.handle_key(ctrl(c)), None, "ctrl-{c}");
+            assert_eq!(a.mode, Mode::Normal, "ctrl-{c}");
+            assert_eq!(a.hscroll, 0, "ctrl-{c}");
+            assert!(a.message.is_none(), "ctrl-{c}");
+        }
+        assert_eq!(a.selected_number(), Some(2));
+        assert_eq!(a.handle_key(key('n')), Some(Command::Next));
+        // Ctrl-C still quits.
+        assert_eq!(a.handle_key(ctrl('c')), Some(Command::Quit));
     }
 
     #[test]
