@@ -44,7 +44,10 @@ fn errors_include_git_args_and_stderr() {
         .switch("missing-branch")
         .unwrap_err()
         .to_string();
-    assert!(err.contains("git switch missing-branch"), "{err}");
+    assert!(
+        err.contains("git switch --no-guess missing-branch"),
+        "{err}"
+    );
     assert!(err.contains("missing-branch"), "{err}");
 }
 
@@ -363,4 +366,25 @@ fn difftool_failures_say_what_to_do() {
     assert!(err.contains("128"), "{err}");
     assert!(err.contains("diff.tool"), "{err}");
     assert!(err.contains("--tool-help"), "{err}");
+}
+
+#[test]
+fn switch_does_not_bring_back_a_branch_from_its_remote_copy() {
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    let remote = tempfile::tempdir().expect("remote dir");
+    let remote_path = remote.path().to_str().expect("utf-8 path").to_string();
+    repo.git(&["clone", "-q", "--bare", ".", &remote_path]);
+    repo.git(&["remote", "add", "origin", &remote_path]);
+    repo.git(&["fetch", "-q", "origin"]);
+    // `main` is renamed: only `origin/main` is left under that name.
+    repo.git(&["branch", "-m", "main", "renamed"]);
+    assert!(git.switch("main").is_err());
+    assert!(!git.branch_exists("main").unwrap());
+    assert_eq!(git.current_branch().unwrap().as_deref(), Some("renamed"));
+    assert!(git.is_ancestor("HEAD", "renamed").unwrap());
+    assert!(
+        !git.is_ancestor("0000000000000000000000000000000000000001", "renamed")
+            .unwrap()
+    );
 }

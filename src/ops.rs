@@ -670,6 +670,39 @@ fn check_on_run_branch(run: &Run) -> Result<()> {
     Ok(())
 }
 
+/// The run branch exists and still holds the latest checkpoint. A `git reset`,
+/// an amend or a rebase of the branch drops the work of the phases after the
+/// commit it went back to, while the state still counts them as done, so the
+/// run would go on (and merge) without it.
+fn check_checkpoints_kept(run: &Run) -> Result<()> {
+    let branch = &run.state.run_branch;
+    if !run.git.branch_exists(branch)? {
+        bail!(
+            "The run branch `{branch}` no longer exists, so the run cannot go on. \
+Run `phasewise abort` to end it."
+        );
+    }
+    let Some((number, sha)) = run
+        .state
+        .phases
+        .iter()
+        .rev()
+        .find_map(|p| p.checkpoint_sha.as_deref().map(|sha| (p.number, sha)))
+    else {
+        return Ok(());
+    };
+    if !run.git.is_ancestor(sha, branch)? {
+        let short: String = sha.chars().take(7).collect();
+        bail!(
+            "The checkpoint of phase {number} ({short}) is no longer on `{branch}`: the branch \
+was reset, amended or rebased, so the work of the phases after that point is missing. To \
+restore it run `git switch {branch} && git reset --hard {sha}` (commits made since are \
+dropped), or run `phasewise abort` to end the run."
+        );
+    }
+    Ok(())
+}
+
 fn check_can_advance(run: &Run) -> Result<()> {
     check_active(run)?;
     if let Some(failed) = run
@@ -684,6 +717,7 @@ fn check_can_advance(run: &Run) -> Result<()> {
             failed.number - 1
         );
     }
+    check_checkpoints_kept(run)?;
     check_on_run_branch(run)?;
     let dirty = dirty_paths(&run.git)?;
     if !dirty.is_empty() {
@@ -958,6 +992,7 @@ pub fn prepare_merge(run: &Run) -> Result<()> {
             run.state.run_id
         );
     }
+    check_checkpoints_kept(run)?;
     let dirty = dirty_paths(&run.git)?;
     if !dirty.is_empty() {
         let listed: Vec<&str> = dirty

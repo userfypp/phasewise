@@ -268,7 +268,22 @@ discard: move it out of the repository or add it to `.git/info/exclude`, then ru
     }
 
     pub fn switch(&self, branch: &str) -> Result<()> {
-        self.run(&["switch", branch]).map(|_| ())
+        // `--no-guess`: a branch that is gone locally must not come back as a
+        // copy of `origin/<branch>`, which would be a different branch.
+        self.run(&["switch", "--no-guess", branch]).map(|_| ())
+    }
+
+    /// Whether `commit` is `of` or one of its ancestors. A commit that does
+    /// not exist is not.
+    pub fn is_ancestor(&self, commit: &str, of: &str) -> Result<bool> {
+        let args = ["merge-base", "--is-ancestor", commit, of];
+        let output = self.output(&args, None)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            // 128: not a commit the repository knows.
+            Some(1) | Some(128) => Ok(false),
+            _ => Err(self.failure(&args, &output)),
+        }
     }
 
     /// Stages everything except phasewise's own `.phasewise/` directory, even

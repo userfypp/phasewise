@@ -155,6 +155,57 @@ fn report_summarizes_the_run_on_stdout_and_in_a_file() {
 }
 
 #[test]
+fn a_run_whose_checkpoint_was_dropped_from_its_branch_cannot_go_on_or_merge() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let checkpoint = env.repo.git_trim(&["rev-parse", "HEAD"]);
+    let branch = env.repo.git_trim(&["branch", "--show-current"]);
+
+    // The user resets the run branch: phase 1's work is gone, yet the state
+    // still counts the phase as done.
+    env.repo.git(&["reset", "-q", "--hard", &env.main_sha]);
+    let next = env.exec(&["next"], &[]);
+    assert_eq!(next.code, 1, "{}{}", next.stdout, next.stderr);
+    assert!(
+        next.stderr.contains("The checkpoint of phase 1 ")
+            && next.stderr.contains("is no longer on"),
+        "{}",
+        next.stderr
+    );
+    // Nothing moved, and the way back that the message gives works.
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), env.main_sha);
+    env.repo.git(&["reset", "-q", "--hard", &checkpoint]);
+    env.ok(&["next"], &[]);
+    env.ok(&["next"], &[]);
+    env.ok(&["next"], &[]);
+
+    // A finished run does not merge without a phase either.
+    env.repo.git(&["reset", "-q", "--hard", &checkpoint]);
+    let merge = env.exec(&["merge", "--yes"], &[]);
+    assert_eq!(merge.code, 1, "{}{}", merge.stdout, merge.stderr);
+    assert!(merge.stderr.contains("is no longer on"), "{}", merge.stderr);
+    assert_eq!(env.repo.git_trim(&["branch", "--show-current"]), branch);
+}
+
+#[test]
+fn a_deleted_run_branch_is_named_and_the_run_can_be_aborted() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let branch = env.repo.git_trim(&["branch", "--show-current"]);
+    env.repo.git(&["switch", "-q", "main"]);
+    env.repo.git(&["branch", "-D", &branch]);
+    let next = env.exec(&["next"], &[]);
+    assert_eq!(next.code, 1, "{}{}", next.stdout, next.stderr);
+    assert!(
+        next.stderr
+            .contains(&format!("The run branch `{branch}` no longer exists")),
+        "{}",
+        next.stderr
+    );
+    assert!(next.stderr.contains("phasewise abort"), "{}", next.stderr);
+}
+
+#[test]
 fn next_names_a_submodule_or_a_nested_repository_that_it_cannot_clean() {
     let env = Env::new();
     let lib = TestRepo::new();

@@ -480,6 +480,12 @@ Environment variables:
   Commits you made by hand on the run branch are protected: if `retry` or
   `rollback` would drop one that is on no other branch or tag, it refuses and
   changes nothing. Run `git branch keep-my-work`, then repeat the command.
+- **"The checkpoint of phase N is no longer on the run branch"**: the branch was
+  reset, amended or rebased, so the work after that point is missing. `next` and
+  `merge` refuse rather than go on without it. Restore it with the command in
+  the message (`git reset --hard <checkpoint>`), or end the run with
+  `phasewise abort`. Likewise, if the run branch was deleted, only `abort`
+  is left.
   To keep a fix you made by hand instead, edit the working tree and run
   `phasewise accept` (or press `a`): no agent runs, the plan's checks run on
   your tree and, if they pass, everything git does not ignore (new files
