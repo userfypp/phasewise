@@ -250,7 +250,9 @@ These hold everywhere. A change that breaks one is a design change.
 - **`git clean` never touches `.phasewise/`**: it runs with
   `-e /.phasewise/`, and the directory is also excluded.
 - **State is written atomically:** a temporary file in the same directory,
-  `sync_all`, then `rename`.
+  `sync_all`, then `rename`. A path that is a symbolic link (a settings file
+  kept in a dotfiles repository) is written through: the file it points to
+  is replaced and the link stays.
 - **One process changes a run at a time.** `runs/<id>/lock` holds the PID of
   the process running a mutating operation, created with `create_new`. A lock
   whose process is gone is stale and replaced. With a live lock, read-only
