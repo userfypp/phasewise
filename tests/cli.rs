@@ -9,8 +9,8 @@ fn phasewise() -> Command {
 fn help_lists_all_subcommands() {
     let mut assert = phasewise().arg("--help").assert().success();
     for name in [
-        "init", "check", "doctor", "run", "next", "retry", "rollback", "status", "diff", "review",
-        "abort",
+        "init", "check", "doctor", "run", "next", "retry", "rollback", "status", "diff", "report",
+        "review", "abort",
     ] {
         assert = assert.stdout(predicate::str::is_match(format!(r"(?m)^\s+{name}\s")).unwrap());
     }

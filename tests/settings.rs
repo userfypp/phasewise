@@ -165,3 +165,37 @@ fn the_directory_falls_back_to_xdg_then_home() {
         .success();
     assert!(dir.path().join(".config/phasewise/settings.toml").exists());
 }
+
+#[test]
+fn parallel_sets_in_separate_processes_all_take_effect() {
+    let changes = [
+        ("limits", "off"),
+        ("bell", "on"),
+        ("color", "never"),
+        ("agent", "codex"),
+        ("model", "some-model"),
+        ("effort", "low"),
+    ];
+    for _ in 0..5 {
+        let config = tempfile::tempdir().expect("temp dir");
+        let children: Vec<_> = changes
+            .iter()
+            .map(|(key, value)| {
+                std::process::Command::new(assert_cmd::cargo::cargo_bin!("phasewise"))
+                    .env("PHASEWISE_CONFIG_DIR", config.path())
+                    .env_remove("XDG_CONFIG_HOME")
+                    .args(["settings", "set", key, value])
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .expect("spawn")
+            })
+            .collect();
+        for mut child in children {
+            assert!(child.wait().expect("wait").success());
+        }
+        let text = std::fs::read_to_string(file(&config)).expect("settings file");
+        let table: toml::Table = text.parse().expect("valid TOML");
+        assert_eq!(table.len(), changes.len(), "an update was lost: {text}");
+        assert!(!config.path().join("settings.toml.lock").exists());
+    }
+}

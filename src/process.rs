@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 /// "Operation not permitted" (EPERM, read in the C locale) means it exists but
 /// belongs to another user, so it counts as alive.
 pub fn is_alive(pid: u32) -> bool {
+    // `kill -0 0` signals the caller's own process group and always succeeds,
+    // and a value above `i32::MAX` is not a PID: neither names a process.
+    if pid == 0 || i32::try_from(pid).is_err() {
+        return false;
+    }
     Command::new("sh")
         .args(["-c", "kill -0 \"$1\"", "sh"])
         .arg(pid.to_string())
@@ -275,6 +280,13 @@ mod tests {
 
     fn registered(pgid: u32) -> bool {
         lock_groups().contains(&pgid)
+    }
+
+    #[test]
+    fn pid_zero_and_impossible_pids_are_not_alive() {
+        assert!(!is_alive(0));
+        assert!(!is_alive(u32::MAX));
+        assert!(!is_alive(i32::MAX as u32 + 1));
     }
 
     #[test]

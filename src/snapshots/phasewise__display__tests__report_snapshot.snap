@@ -1,0 +1,23 @@
+---
+source: src/display.rs
+expression: report_markdown(&sample_report())
+---
+# Add | pipes and lines
+
+Run `20260101-000000-abcd` on branch `phasewise/20260101-000000-abcd` (from `main`), agent: claude
+
+| # | Phase | Status | Time | Cost | Files |
+|--:|---|---|--:|--:|--:|
+| 1 | Parse \| split | done | 2m 05s | $0.5000 | 3 |
+| 2 | Second | awaiting review | 5s | - | 1 |
+| 3 | Third | pending | - | - | - |
+
+## Checks
+
+- `cargo test`
+- `` echo `x` | grep x ``
+- Phase 2: `test -f a && test -f b`
+
+## Totals
+
+1 of 3 phases done, 2m 10s, $0.50, 4 files changed

@@ -464,13 +464,43 @@ fn parse_timeout_seconds(name: &str, value: &str) -> Result<Duration> {
     Ok(Duration::from_secs(secs))
 }
 
+/// The agent's time limit in a phase: the environment variable wins over the
+/// phase's own `phase_timeout_minutes`, which wins over the plan's.
+fn effective_phase_timeout(
+    plan_minutes: u64,
+    phase_minutes: Option<u64>,
+    env: Option<Duration>,
+) -> Duration {
+    env.unwrap_or_else(|| {
+        Duration::from_secs(phase_minutes.unwrap_or(plan_minutes).saturating_mul(60))
+    })
+}
+
 /// Limits from the plan; `PHASEWISE_PHASE_TIMEOUT_SECONDS` overrides the phase timeout.
+/// The phase timeout is the plan's: use `settings_for_phase` for a given phase.
 pub fn settings(run: &Run) -> Result<PhaseSettings> {
+    settings_with(run, None)
+}
+
+/// Like `settings`, with the phase timeout of phase `number` (its own
+/// `phase_timeout_minutes` when its settings block sets one).
+pub fn settings_for_phase(run: &Run, number: usize) -> Result<PhaseSettings> {
+    let own = run
+        .plan
+        .phases
+        .iter()
+        .find(|p| p.number == number)
+        .and_then(|p| p.phase_timeout_minutes);
+    settings_with(run, own)
+}
+
+fn settings_with(run: &Run, phase_minutes: Option<u64>) -> Result<PhaseSettings> {
     let config = &run.plan.config;
-    let phase_timeout = match std::env::var(PHASE_TIMEOUT_ENV) {
-        Ok(value) => parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?,
-        Err(_) => Duration::from_secs(config.phase_timeout_minutes.saturating_mul(60)),
+    let env = match std::env::var(PHASE_TIMEOUT_ENV) {
+        Ok(value) => Some(parse_timeout_seconds(PHASE_TIMEOUT_ENV, &value)?),
+        Err(_) => None,
     };
+    let phase_timeout = effective_phase_timeout(config.phase_timeout_minutes, phase_minutes, env);
     let max_cost_usd = spending_limit(run)?;
     Ok(PhaseSettings {
         max_retries: config.max_retries,
@@ -682,6 +712,40 @@ fn reset_phase(run: &mut Run, number: usize) {
     }
 }
 
+/// Refuses a reset to `target` that would drop commits the user made on the
+/// run branch: those that are not checkpoints of this run and are on no other
+/// branch or tag. Nothing is changed.
+fn check_no_commits_lost(run: &Run, target: &str) -> Result<()> {
+    let checkpoints: Vec<String> = run
+        .state
+        .phases
+        .iter()
+        .filter_map(|p| p.checkpoint_sha.clone())
+        .collect();
+    let lost = run.git.commits_that_would_be_lost(target, &checkpoints)?;
+    if lost.is_empty() {
+        return Ok(());
+    }
+    let short = |sha: &str| sha.chars().take(7).collect::<String>();
+    let mut list: Vec<String> = lost
+        .iter()
+        .take(5)
+        .map(|c| format!("{} {}", short(&c.sha), c.subject))
+        .collect();
+    if lost.len() > 5 {
+        list.push(format!("and {} more", lost.len() - 5));
+    }
+    bail!(
+        "Going back to {} would remove {} commit(s) that are only on {}: {}. Nothing was changed. \
+Keep them first with `git branch keep-my-work` (any new branch or tag name works), then run \
+the command again. Commits on no branch stay reachable through `git reflog` for a while.",
+        short(target),
+        lost.len(),
+        run.state.run_branch,
+        list.join("; ")
+    )
+}
+
 /// Reruns the highest-numbered `failed` or `awaiting_review` phase from the
 /// checkpoint before it, in a fresh session, with `note` added to the prompt.
 pub fn retry(
@@ -722,6 +786,7 @@ then `phasewise rollback 0` to start over.",
     // Before discarding anything: a refused retry must leave the work as it is.
     check_model_override(run, overrides, number)?;
     check_budget(run, &settings(run)?, number)?;
+    check_no_commits_lost(run, &previous)?;
     run.git.reset_hard(&previous)?;
     run.git.clean_untracked()?;
     reset_phase(run, number);
@@ -735,7 +800,9 @@ then `phasewise rollback 0` to start over.",
 /// `rollback` checks again under the lock.
 pub fn prepare_rollback(run: &Run, k: usize) -> Result<String> {
     check_active_unlocked(run)?;
-    rollback_target(run, k)
+    let sha = rollback_target(run, k)?;
+    check_no_commits_lost(run, &sha)?;
+    Ok(sha)
 }
 
 fn rollback_target(run: &Run, k: usize) -> Result<String> {
@@ -773,6 +840,7 @@ now {}. Nothing was changed; run `phasewise rollback {k}` again.",
             sha.chars().take(7).collect::<String>()
         );
     }
+    check_no_commits_lost(run, &sha)?;
     run.git.reset_hard(&sha)?;
     run.git.clean_untracked()?;
     let numbers: Vec<usize> = run.state.phases.iter().map(|p| p.number).collect();
@@ -947,7 +1015,7 @@ fn run_one(
     cancel: &AtomicBool,
 ) -> Result<PhaseStatus> {
     let agent = agent_for(phase_agent(&run.state, &run.plan, number));
-    let settings = settings(run)?;
+    let settings = settings_for_phase(run, number)?;
     check_budget(run, &settings, number)?;
     let mut ctx = PhaseContext {
         git: &run.git,
@@ -1428,6 +1496,15 @@ fn check_plan_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phase_timeout_precedence_is_env_then_phase_then_plan() {
+        let secs = Duration::from_secs;
+        assert_eq!(effective_phase_timeout(60, None, None), secs(3600));
+        assert_eq!(effective_phase_timeout(60, Some(5), None), secs(300));
+        assert_eq!(effective_phase_timeout(60, None, Some(secs(7))), secs(7));
+        assert_eq!(effective_phase_timeout(60, Some(5), Some(secs(7))), secs(7));
+    }
 
     #[test]
     fn until_wins_over_auto_and_must_be_in_range() {

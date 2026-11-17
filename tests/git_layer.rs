@@ -219,6 +219,55 @@ fn numstat_counts_and_binary() {
 }
 
 #[test]
+fn commits_that_would_be_lost_reports_only_unreferenced_user_commits() {
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    let base = git.head_sha().unwrap();
+    git.create_branch("phasewise/test-run", &base).unwrap();
+
+    repo.write("a.txt", "a\n");
+    git.add_all().unwrap();
+    let cp1 = git
+        .commit(&checkpoint_message("test-run", 1, "First"), true)
+        .unwrap();
+
+    // Only phasewise's checkpoints above the target: nothing to lose.
+    let keep = vec![cp1.clone()];
+    assert!(
+        git.commits_that_would_be_lost(&base, &keep)
+            .unwrap()
+            .is_empty()
+    );
+
+    // A commit made by hand, on no other ref: reported with its subject.
+    repo.commit_file("mine.txt", "mine\n", "my work");
+    let mine = git.head_sha().unwrap();
+    let lost = git.commits_that_would_be_lost(&cp1, &keep).unwrap();
+    assert_eq!(lost.len(), 1);
+    assert_eq!(lost[0].sha, mine);
+    assert_eq!(lost[0].subject, "my work");
+
+    // The same commit on another branch (or tag) is safe.
+    repo.git(&["branch", "keep", &mine]);
+    assert!(
+        git.commits_that_would_be_lost(&cp1, &keep)
+            .unwrap()
+            .is_empty()
+    );
+    repo.git(&["branch", "-D", "keep"]);
+    assert_eq!(
+        git.commits_that_would_be_lost(&cp1, &keep).unwrap().len(),
+        1
+    );
+    repo.git(&["tag", "keep-tag", &mine]);
+    assert!(
+        git.commits_that_would_be_lost(&cp1, &keep)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn checkpoint_message_format() {
     assert_eq!(
         checkpoint_message("20260101-000000-abcd", 3, "Add API"),

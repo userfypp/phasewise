@@ -525,6 +525,144 @@ pub fn failure_kind_words(kind: FailureKind) -> &'static str {
     }
 }
 
+/// One phase of a run report.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReportPhase {
+    pub number: usize,
+    pub title: String,
+    pub status: PhaseStatus,
+    pub agent: AgentKind,
+    pub secs: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub files: Option<usize>,
+    /// The phase's own checks.
+    pub verify: Vec<String>,
+}
+
+/// What `phasewise report` needs, already read from the run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Report {
+    pub title: Option<String>,
+    pub run_id: String,
+    pub run_branch: String,
+    pub original_branch: String,
+    pub agent: AgentKind,
+    /// The plan's global checks.
+    pub verify: Vec<String>,
+    pub phases: Vec<ReportPhase>,
+    /// Time of the finished phases, as in `status`.
+    pub total_secs: Option<u64>,
+    /// Cost of the run, `None` when no phase reported one.
+    pub total_cost: Option<f64>,
+    /// Files changed from the start of the run to the last checkpoint.
+    pub total_files: Option<usize>,
+}
+
+/// One line of text.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A table cell: one line, `|` escaped.
+fn md_cell(text: &str) -> String {
+    one_line(text).replace('|', "\\|")
+}
+
+/// An inline code span on one line; a longer fence when the text has backticks.
+fn md_code(text: &str) -> String {
+    let text = one_line(text);
+    if text.contains('`') {
+        format!("`` {text} ``")
+    } else {
+        format!("`{text}`")
+    }
+}
+
+/// The run as Markdown for a pull request description. Pure and stable: it
+/// uses only the data it is given.
+pub fn report_markdown(report: &Report) -> String {
+    let mixed = report.phases.iter().any(|p| p.agent != report.agent);
+    let title = report
+        .title
+        .as_deref()
+        .map(one_line)
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "phasewise run".to_string());
+    let mut out = format!("# {title}\n\n");
+    out.push_str(&format!(
+        "Run {} on branch {} (from {}), agent: {}\n\n",
+        md_code(&report.run_id),
+        md_code(&report.run_branch),
+        md_code(&report.original_branch),
+        report.agent
+    ));
+    let (head, rule) = if mixed {
+        (
+            "| # | Phase | Agent | Status | Time | Cost | Files |",
+            "|--:|---|---|---|--:|--:|--:|",
+        )
+    } else {
+        (
+            "| # | Phase | Status | Time | Cost | Files |",
+            "|--:|---|---|--:|--:|--:|",
+        )
+    };
+    out.push_str(&format!("{head}\n{rule}\n"));
+    for p in &report.phases {
+        let mut cells = vec![p.number.to_string(), md_cell(&p.title)];
+        if mixed {
+            cells.push(p.agent.to_string());
+        }
+        cells.push(status_label(p.status).to_string());
+        cells.push(p.secs.map_or_else(|| "-".to_string(), duration));
+        cells.push(
+            p.cost_usd
+                .map_or_else(|| "-".to_string(), |c| format!("${c:.4}")),
+        );
+        cells.push(p.files.map_or_else(|| "-".to_string(), |n| n.to_string()));
+        out.push_str(&format!("| {} |\n", cells.join(" | ")));
+    }
+    out.push_str("\n## Checks\n\n");
+    let mut checks: Vec<String> = report
+        .verify
+        .iter()
+        .map(|c| format!("- {}", md_code(c)))
+        .collect();
+    for p in &report.phases {
+        for c in &p.verify {
+            checks.push(format!("- Phase {}: {}", p.number, md_code(c)));
+        }
+    }
+    if checks.is_empty() {
+        out.push_str("The plan has no checks.\n");
+    } else {
+        for line in checks {
+            out.push_str(&format!("{line}\n"));
+        }
+    }
+    let done = report
+        .phases
+        .iter()
+        .filter(|p| p.status == PhaseStatus::Done)
+        .count();
+    let mut totals = vec![format!(
+        "{done} of {} done",
+        phase_count(report.phases.len())
+    )];
+    if let Some(secs) = report.total_secs {
+        totals.push(duration(secs));
+    }
+    if let Some(cost) = report.total_cost {
+        totals.push(money(cost));
+    }
+    if let Some(n) = report.total_files {
+        let noun = if n == 1 { "file" } else { "files" };
+        totals.push(format!("{n} {noun} changed"));
+    }
+    out.push_str(&format!("\n## Totals\n\n{}\n", totals.join(", ")));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1034,5 +1172,92 @@ mod tests {
         assert_eq!(phase_count(0), "0 phases");
         assert_eq!(phase_count(1), "1 phase");
         assert_eq!(phase_count(2), "2 phases");
+    }
+
+    fn sample_report() -> Report {
+        let phase = |number, title: &str, status, secs, cost_usd, files| ReportPhase {
+            number,
+            title: title.to_string(),
+            status,
+            agent: AgentKind::Claude,
+            secs,
+            cost_usd,
+            files,
+            verify: Vec::new(),
+        };
+        Report {
+            title: Some("Add | pipes\nand lines".to_string()),
+            run_id: "20260101-000000-abcd".to_string(),
+            run_branch: "phasewise/20260101-000000-abcd".to_string(),
+            original_branch: "main".to_string(),
+            agent: AgentKind::Claude,
+            verify: vec!["cargo test".to_string(), "echo `x` | grep x".to_string()],
+            phases: vec![
+                phase(
+                    1,
+                    "Parse | split",
+                    PhaseStatus::Done,
+                    Some(125),
+                    Some(0.5),
+                    Some(3),
+                ),
+                ReportPhase {
+                    verify: vec!["test -f a\n  && test -f b".to_string()],
+                    ..phase(
+                        2,
+                        "Second",
+                        PhaseStatus::AwaitingReview,
+                        Some(5),
+                        None,
+                        Some(1),
+                    )
+                },
+                phase(3, "Third", PhaseStatus::Pending, None, None, None),
+            ],
+            total_secs: Some(130),
+            total_cost: Some(0.5),
+            total_files: Some(4),
+        }
+    }
+
+    #[test]
+    fn report_snapshot() {
+        insta::assert_snapshot!(report_markdown(&sample_report()));
+    }
+
+    #[test]
+    fn report_shows_the_agent_only_when_the_plan_mixes_them() {
+        let mut report = sample_report();
+        assert!(!report_markdown(&report).contains("| Agent |"));
+        report.phases[1].agent = AgentKind::Codex;
+        let text = report_markdown(&report);
+        assert!(text.contains("| # | Phase | Agent | Status | Time | Cost | Files |"));
+        assert!(text.contains("| 2 | Second | codex | awaiting review | 5s | - | 1 |"));
+    }
+
+    #[test]
+    fn report_without_cost_time_or_checks() {
+        let mut report = sample_report();
+        report.title = None;
+        report.verify.clear();
+        report.phases.iter_mut().for_each(|p| {
+            p.cost_usd = None;
+            p.secs = None;
+            p.verify.clear();
+        });
+        report.total_cost = None;
+        report.total_secs = None;
+        report.total_files = None;
+        let text = report_markdown(&report);
+        assert!(text.starts_with("# phasewise run\n"));
+        assert!(text.contains("The plan has no checks."));
+        assert!(text.ends_with("## Totals\n\n1 of 3 phases done\n"));
+    }
+
+    #[test]
+    fn report_escapes_pipes_and_newlines_in_table_cells() {
+        let text = report_markdown(&sample_report());
+        assert!(text.contains("| 1 | Parse \\| split | done | 2m 05s | $0.5000 | 3 |"));
+        assert!(text.starts_with("# Add | pipes and lines\n"));
     }
 }
