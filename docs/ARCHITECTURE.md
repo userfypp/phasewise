@@ -236,7 +236,8 @@ These hold everywhere. A change that breaks one is a design change.
   never resets or commits on the original branch.** The one commit it makes
   outside the run branch is the plan file, when the user asks for it with `c`.
   That commit runs the user's hooks and signing like any commit of theirs;
-  checkpoints skip both (`--no-verify --no-gpg-sign`) because they are
+  checkpoints skip both (`--no-verify --no-gpg-sign`, and no hooks directory at
+  all, so not even `prepare-commit-msg` or `post-commit` run) because they are
   phasewise's own bookkeeping.
 - **The only file written outside `.phasewise/` is the user settings file**
   (`settings.toml`, see `settings.rs`), and only when the user changes a

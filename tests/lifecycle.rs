@@ -235,6 +235,38 @@ fn a_run_without_its_plan_copy_does_not_advise_init() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn checkpoint_commits_run_none_of_the_users_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    // Hooks that `--no-verify` does not skip: one fails, one would stall.
+    for (name, body) in [
+        ("prepare-commit-msg", "#!/bin/sh\necho hook >&2\nexit 1\n"),
+        ("post-commit", "#!/bin/sh\ntouch ../hook-ran\n"),
+    ] {
+        let hook = env.repo.path().join(".git/hooks").join(name);
+        std::fs::create_dir_all(hook.parent().expect("parent")).expect("hooks dir");
+        std::fs::write(&hook, body).expect("hook");
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    env.ok(&["run"], &[]);
+    assert!(
+        env.repo
+            .git_trim(&["log", "-1", "--format=%B"])
+            .contains("Phasewise-Run:"),
+        "the checkpoint must be committed with its trailer"
+    );
+    assert!(
+        !env.repo
+            .path()
+            .parent()
+            .expect("parent")
+            .join("hook-ran")
+            .exists()
+    );
+}
+
 #[test]
 fn a_deleted_run_branch_is_named_and_the_run_can_be_aborted() {
     let env = Env::new();

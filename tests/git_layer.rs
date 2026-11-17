@@ -415,3 +415,29 @@ fn commits_with_lines_finds_only_the_commits_that_carry_every_line() {
             .is_empty()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_failing_post_checkout_hook_does_not_fail_a_switch_that_worked() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    let hook = repo.path().join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho 'git-lfs was not found' >&2\nexit 2\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let head = git.head_sha().unwrap();
+    git.create_branch("phasewise/x", &head).unwrap();
+    assert_eq!(
+        git.current_branch().unwrap().as_deref(),
+        Some("phasewise/x")
+    );
+    git.switch("main").unwrap();
+    assert_eq!(git.current_branch().unwrap().as_deref(), Some("main"));
+    // A switch that really fails is still an error.
+    assert!(git.switch("missing-branch").is_err());
+}

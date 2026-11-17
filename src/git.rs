@@ -277,13 +277,26 @@ discard: move it out of the repository or add it to `.git/info/exclude`, then ru
 
     /// Creates `name` at `start_sha` and switches to it.
     pub fn create_branch(&self, name: &str, start_sha: &str) -> Result<()> {
-        self.run(&["switch", "-c", name, start_sha]).map(|_| ())
+        let result = self.run(&["switch", "-c", name, start_sha]).map(|_| ());
+        self.switched_despite_hook(result, name)
     }
 
     pub fn switch(&self, branch: &str) -> Result<()> {
         // `--no-guess`: a branch that is gone locally must not come back as a
         // copy of `origin/<branch>`, which would be a different branch.
-        self.run(&["switch", "--no-guess", branch]).map(|_| ())
+        let result = self.run(&["switch", "--no-guess", branch]).map(|_| ());
+        self.switched_despite_hook(result, branch)
+    }
+
+    /// `git switch` exits with the status of the `post-checkout` hook, so a
+    /// hook that fails (git-lfs's does when git-lfs is not installed) makes a
+    /// switch that worked look like a failure. When HEAD is on `branch`, the
+    /// switch is done and the hook's failure is not ours to report.
+    fn switched_despite_hook(&self, result: Result<()>, branch: &str) -> Result<()> {
+        match result {
+            Err(_) if self.current_branch().ok().flatten().as_deref() == Some(branch) => Ok(()),
+            other => other,
+        }
     }
 
     /// Whether `commit` is `of` or one of its ancestors. A commit that does
@@ -325,7 +338,18 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
 
     /// Commits the index with `message` and returns the new `HEAD` SHA.
     pub fn commit(&self, message: &str, allow_empty: bool) -> Result<String> {
-        let mut args = vec!["commit", "-q", "--no-verify", "--no-gpg-sign"];
+        // phasewise's own bookkeeping: no hook of the user's runs. `--no-verify`
+        // skips only pre-commit and commit-msg; prepare-commit-msg (which may
+        // rewrite the trailers) and post-commit would still run, and a failing
+        // or slow one would fail or stall every phase.
+        let mut args = vec![
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-q",
+            "--no-verify",
+            "--no-gpg-sign",
+        ];
         if allow_empty {
             args.push("--allow-empty");
         }
