@@ -220,6 +220,55 @@ fn an_existing_output_needs_force() {
 }
 
 #[test]
+fn an_output_that_cannot_be_written_is_refused_before_the_agent_runs() {
+    let env = Env::new();
+    env.repo.write("file.txt", "x\n");
+    env.repo.write("real/keep.md", "x\n");
+    std::os::unix::fs::symlink(
+        "/nonexistent/target.md",
+        env.repo.path().join("dangling.md"),
+    )
+    .expect("symlink");
+    for (output, want) in [
+        ("newdir/", "is a directory"),
+        ("file.txt/plan.md", "is not a directory"),
+        (".git/plan.md", "inside `.git`"),
+        (".phasewise/plan.md", "inside `.phasewise`"),
+        ("dangling.md", "already exists"),
+    ] {
+        let out = env.exec(&["goal", "--output", output], &[]);
+        assert_eq!(out.code, 1, "{output}: {}{}", out.stdout, out.stderr);
+        assert!(out.stderr.contains(want), "{output}: {}", out.stderr);
+        assert!(
+            env.calls().is_empty(),
+            "{output}: the agent must not be called"
+        );
+    }
+    // The link was not replaced.
+    assert!(
+        std::fs::symlink_metadata(env.repo.path().join("dangling.md"))
+            .expect("still there")
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn a_write_that_fails_after_the_agent_ran_points_to_the_draft() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    let dir = env.repo.path().join("readonly");
+    std::fs::create_dir(&dir).expect("dir");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let out = env.exec(&["goal", "--output", "readonly/plan.md"], &[]);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
+    assert_eq!(out.code, 1, "{}{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("Cannot write"), "{}", out.stderr);
+    assert!(out.stderr.contains("draft-1.md"), "{}", out.stderr);
+    assert!(!dir.join("plan.md").exists());
+}
+
+#[test]
 fn output_path_is_used() {
     let env = Env::new();
     let out = env.ok(&["goal", "--output", "docs/plan.md"], &[]);

@@ -1327,16 +1327,40 @@ pub fn prepare_plan(cwd: &Path, output: Option<&Path>, force: bool) -> Result<Pl
         Some(path) => cwd.join(path),
         None => git.root().join(plan::DEFAULT_PLAN_FILE),
     };
-    if output.exists() && !force {
+    // `symlink_metadata`: a link that points nowhere is the user's too.
+    if output.symlink_metadata().is_ok() && !force {
         bail!(
             "{} already exists. Choose another path with `--output`, or pass `--force` to overwrite it.",
             output.display()
         );
     }
-    if output.is_dir() {
+    if output.is_dir() || output.as_os_str().to_string_lossy().ends_with(['/', '\\']) {
         bail!(
             "{} is a directory. Choose a file path with `--output`.",
             output.display()
+        );
+    }
+    // Everything that could stop the write is found now, not after the agent
+    // has run (and been paid for).
+    for protected in [".git", ".phasewise"] {
+        if output.starts_with(git.root().join(protected)) {
+            bail!(
+                "{} is inside `{protected}`, which phasewise or git keeps for itself, so the plan \
+could not be committed. Choose a path in the working tree with `--output`.",
+                output.display()
+            );
+        }
+    }
+    if let Some(ancestor) = output
+        .ancestors()
+        .skip(1)
+        .find(|a| a.symlink_metadata().is_ok())
+        && !ancestor.is_dir()
+    {
+        bail!(
+            "{} is not a directory, so the plan cannot be written below it. Choose another path \
+with `--output`.",
+            ancestor.display()
         );
     }
     Ok(PlanTarget { git, output })
@@ -1472,7 +1496,7 @@ PHASEWISE_PLAN_TIMEOUT_SECONDS",
                 let draft = save_draft(&dir, attempt, &text);
                 // The output was checked before the agent started; a file that
                 // appeared since then belongs to the user and is kept.
-                if !request.force && target.output.exists() {
+                if !request.force && target.output.symlink_metadata().is_ok() {
                     return failed(
                         vec![format!(
                             "{} appeared while the agent was working and was left as it is. \
@@ -1483,7 +1507,16 @@ The new plan is the last draft: compare the two and keep what you want.",
                         false,
                     );
                 }
-                write_atomic(&target.output, text.as_bytes())?;
+                if let Err(err) = write_atomic(&target.output, text.as_bytes()) {
+                    return failed(
+                        vec![format!(
+                            "Cannot write {}: {err:#}. The plan is the last draft: copy it where you want it.",
+                            target.output.display()
+                        )],
+                        draft.or(last_draft),
+                        false,
+                    );
+                }
                 emit(PlanEvent::Written {
                     path: target.output.clone(),
                 });

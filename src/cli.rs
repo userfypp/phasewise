@@ -1614,7 +1614,7 @@ fn report(output: Option<&Path>, force: bool) -> Result<ExitCode> {
     // Refuse an existing output before reading the run, as `plan` does.
     let target = output.map(|path| cwd.join(path));
     if let Some(target) = &target {
-        if target.exists() && !force {
+        if target.symlink_metadata().is_ok() && !force {
             return Err(anyhow!(
                 "{} already exists. Choose another path with `--output`, or pass `--force` to overwrite it.",
                 target.display()

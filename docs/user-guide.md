@@ -112,7 +112,9 @@ change it there or override it from the home screen or the command line.
 `phasewise plan` options: `--agent`, `--model`, `--effort` (these two choose
 the model and effort of the planning session itself, not of the phases),
 `--output PATH` (default `phasewise.md`) and `--force` to replace an existing
-file. The agent's raw output and every draft stay in `.phasewise/plans/<id>/`.
+file (a link counts as a file). An output that cannot be written (a path ending in
+`/`, below a file, or inside `.git` or `.phasewise`) is refused before the agent
+runs. The agent's raw output and every draft stay in `.phasewise/plans/<id>/`.
 
 ### By hand
 
