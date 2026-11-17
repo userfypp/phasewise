@@ -60,6 +60,11 @@ For orientation, read [Architecture](docs/ARCHITECTURE.md).
   `tests/fakes/` instead of `claude` and `codex`. `FAKE_MODE` and
   `FAKE_PLAN_MODE` choose what a fake does (success, failure, slow, crash, …);
   each script lists its modes at the top.
+- **Property tests** (`proptest`, in `tests/plan_properties.rs`) feed the plan
+  parser arbitrary and plan-like text and check that it never panics, that line
+  numbers fall inside the file and that a rendered plan parses back to what was
+  rendered. A fixed number of cases keeps them fast; to look harder, run them
+  with `PROPTEST_CASES=20000`.
 - **Agent output fixtures** are in `tests/fixtures/`. A `.synthetic` file was
   written by hand; anything copied from a real run must be cleaned of personal
   paths, account data and MCP or plugin names first. `tests/parser_mutations.rs`
