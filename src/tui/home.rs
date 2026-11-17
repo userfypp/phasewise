@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::data::{HomeData, PlanState, RunSummary};
 use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
-    confirm_key, digit_row, edit_text, help_key, help_scroll_max, item, picker_footer,
+    confirm_key, digit_row, edit_text, help_key, help_scroll_max, item, paste_keys, picker_footer,
 };
 use crate::agent::{LaunchOptions, ModelInfo};
 use crate::display::{EventLine, money, phase_count};
@@ -427,6 +427,28 @@ impl Home {
         }
         lines.extend(error_lines(err));
         self.mode = Mode::Error(lines);
+    }
+
+    /// True while a text is being typed: a paste has somewhere to go.
+    pub fn accepts_text(&self) -> bool {
+        match &self.mode {
+            Mode::ModelInput(_) | Mode::GoalInput(_) => true,
+            Mode::Settings(panel) => panel.editing.is_some(),
+            _ => false,
+        }
+    }
+
+    /// A paste (bracketed, so its line breaks are not Enter keys) is typed
+    /// into the text being edited; anywhere else it is ignored, because as
+    /// keys its characters would be commands.
+    pub fn handle_paste(&mut self, text: &str) {
+        if !self.accepts_text() {
+            return;
+        }
+        for key in paste_keys(text) {
+            // Typing a character into a text never yields a command.
+            let _ = self.handle_key(key);
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<HomeCommand> {
@@ -1281,6 +1303,30 @@ mod tests {
         }
         h.handle_key(code(KeyCode::Enter));
         assert_eq!(h.effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn a_pasted_goal_is_typed_in_and_never_submitted() {
+        let mut h = home_with(PlanState::Missing);
+        h.handle_key(key('p'));
+        type_text(&mut h, "add ");
+        // The line breaks of the paste would be Enter keys: one would submit.
+        h.handle_paste("a CLI\nwith\ttabs\r\nand more\u{1b}");
+        assert_eq!(
+            h.mode,
+            Mode::GoalInput("add a CLI with tabs and more".into())
+        );
+    }
+
+    #[test]
+    fn a_paste_outside_a_text_is_ignored() {
+        let mut h = home_with(PlanState::Missing);
+        // As keys, `p` would open the goal input and `q` would quit.
+        h.handle_paste("pq");
+        assert_eq!(h.mode, Mode::Normal);
+        h.mode = Mode::Error(vec!["boom".into()]);
+        h.handle_paste("\n");
+        assert_eq!(h.mode, Mode::Error(vec!["boom".into()]));
     }
 
     #[test]

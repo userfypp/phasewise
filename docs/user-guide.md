@@ -463,4 +463,6 @@ all keys · `q` quit.
 
 **Lists and questions**: arrows or `j`/`k` move, `enter` or the row's number
 chooses, `esc` cancels; `y`/`n` answer confirmations. In text fields, `Ctrl-U`
-clears and `Ctrl-W` deletes a word.
+clears and `Ctrl-W` deletes a word, and you can paste: line breaks and tabs
+become spaces, so a pasted goal is never submitted half way. A paste anywhere
+else is ignored.

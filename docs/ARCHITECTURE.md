@@ -294,6 +294,11 @@ TUI: the run screen when the current run is active, the home screen otherwise.
   every 120 ms while a spinner shows. A periodic home reload is dropped if,
   when it arrives, a popup is open, a commit is running or an explicit reload
   happened since it started.
+- **Pasting** uses the terminal's bracketed paste mode (on while the TUI runs,
+  off on every exit path with the rest of the terminal state). Without it, a
+  pasted line break is an Enter key and would submit the input. The loop turns
+  an `Event::Paste` into characters typed into the text being edited, if any;
+  see `shared::paste_keys`.
 - **Quitting** with work in progress asks first; yes cancels every worker and
   waits for them to stop. A second Ctrl-C or `q` while stopping kills every
   process group and exits with 130, like a second signal. The terminal is

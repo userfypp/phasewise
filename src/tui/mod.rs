@@ -22,7 +22,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEvent, KeyEventKind,
+};
 
 use crate::agent::{ModelInfo, agent_for};
 use crate::display::{failure_kind_label, first_line_short, plan_event_line, plan_header};
@@ -131,6 +133,7 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
         ratatui::restore();
     }
 }
@@ -231,6 +234,9 @@ fn launch(cwd: &Path, data: HomeData, run: Option<Run>, screen: Screen) -> Resul
     ui.home.spawn_probes();
     let mut terminal = ratatui::try_init()?;
     let _guard = TerminalGuard;
+    // Without this, a pasted line break arrives as Enter and submits the
+    // input. A terminal that does not know the mode ignores it.
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
     if let Err(err) = ui.event_loop(&mut terminal) {
         ui.stop_all();
         return Err(err);
@@ -724,18 +730,20 @@ impl<'a> Ui<'a> {
                 // Any key or resize may change what is shown.
                 self.mark_dirty();
                 // A resize needs nothing more than the redraw of the next turn.
-                if let Event::Key(key) = event::read()?
-                    && key.kind != KeyEventKind::Release
-                {
-                    if !self.quitting {
-                        self.on_key(key);
-                    } else if is_force_key(key) {
-                        // A worker that never stops must not trap the user:
-                        // do what a second signal does.
-                        process::kill_all_groups();
-                        self.forced = true;
-                        return Ok(());
+                match event::read()? {
+                    Event::Key(key) if key.kind != KeyEventKind::Release => {
+                        if !self.quitting {
+                            self.on_key(key);
+                        } else if is_force_key(key) {
+                            // A worker that never stops must not trap the user:
+                            // do what a second signal does.
+                            process::kill_all_groups();
+                            self.forced = true;
+                            return Ok(());
+                        }
                     }
+                    Event::Paste(text) if !self.quitting => self.on_paste(&text),
+                    _ => {}
                 }
             }
             self.pump();
@@ -777,6 +785,13 @@ impl<'a> Ui<'a> {
         }
         self.next_reload = Instant::now() + HOME_RELOAD_EVERY;
         self.home.spawn_reload();
+    }
+
+    fn on_paste(&mut self, text: &str) {
+        match (self.screen, &mut self.run) {
+            (Screen::Run, Some(tui)) => tui.app.handle_paste(text),
+            _ => self.home.home.handle_paste(text),
+        }
     }
 
     fn on_key(&mut self, key: KeyEvent) {

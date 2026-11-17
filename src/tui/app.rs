@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::data::{DiffView, LogLine, RunView};
 use super::shared::{
     Choice, FooterItem, Notice, PanelOutcome, SETTINGS_SHORTCUT, SettingsPanel, ShortcutGroups,
-    confirm_key, edit_text, help_key, help_scroll_max, item, picker_footer,
+    confirm_key, edit_text, help_key, help_scroll_max, item, paste_keys, picker_footer,
 };
 use crate::settings::Settings;
 use crate::state::PhaseStatus;
@@ -188,6 +188,28 @@ impl App {
         self.diff = diff;
         self.log = log;
         self.verify = verify;
+    }
+
+    /// True while a text is being typed: a paste has somewhere to go.
+    pub fn accepts_text(&self) -> bool {
+        match &self.mode {
+            Mode::Note(_) | Mode::Search(_) => true,
+            Mode::Settings(panel) => panel.editing.is_some(),
+            _ => false,
+        }
+    }
+
+    /// A paste (bracketed, so its line breaks are not Enter keys) is typed
+    /// into the text being edited; anywhere else it is ignored, because as
+    /// keys its characters would be commands.
+    pub fn handle_paste(&mut self, text: &str) {
+        if !self.accepts_text() {
+            return;
+        }
+        for key in paste_keys(text) {
+            // Typing a character into a text never yields a command.
+            let _ = self.handle_key(key);
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
@@ -1304,6 +1326,23 @@ mod tests {
         a.hscroll = 16;
         a.handle_key(key('j'));
         assert_eq!((a.scroll, a.hscroll), (0, 0));
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_note_and_the_search_and_nowhere_else() {
+        let mut a = reviewing();
+        // Not a text: as keys, `r` would open the note and `x` interrupt.
+        a.handle_paste("rx");
+        assert_eq!(a.mode, Mode::Normal);
+
+        a.handle_key(key('/'));
+        a.handle_paste("needle\nhaystack");
+        assert_eq!(a.mode, Mode::Search("needle haystack".into()));
+        a.handle_key(code(KeyCode::Esc));
+
+        a.mode = Mode::Note("try ".into());
+        a.handle_paste("again\r\nplease");
+        assert_eq!(a.mode, Mode::Note("try again please".into()));
     }
 
     #[test]

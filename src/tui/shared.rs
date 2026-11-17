@@ -156,6 +156,27 @@ pub fn edit_text(buffer: &mut String, key: KeyEvent) -> bool {
     }
 }
 
+/// The keys that typing a pasted `text` would be. A newline would submit the
+/// input, so line breaks and tabs become one space each (`\r\n` counts as one
+/// break); other control characters are dropped.
+pub fn paste_keys(text: &str) -> Vec<KeyEvent> {
+    let mut keys = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let c = match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                ' '
+            }
+            '\n' | '\t' => ' ',
+            c if c.is_control() => continue,
+            c => c,
+        };
+        keys.push(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    keys
+}
+
 /// A footer entry: key and action.
 pub type FooterItem = (String, String);
 
@@ -350,6 +371,23 @@ mod tests {
         assert_eq!(digit_row(key('0')), None);
         assert_eq!(digit_row(key('a')), None);
         assert_eq!(digit_row(ctrl('1')), None);
+    }
+
+    #[test]
+    fn a_paste_becomes_characters_without_line_breaks() {
+        let typed = |text: &str| -> String {
+            let mut s = String::new();
+            for key in paste_keys(text) {
+                assert!(edit_text(&mut s, key), "{key:?}");
+            }
+            s
+        };
+        assert_eq!(typed("one\ntwo"), "one two");
+        assert_eq!(typed("one\r\ntwo\rthree"), "one two three");
+        assert_eq!(typed("a\tb"), "a b");
+        assert_eq!(typed("a\u{1b}[0m\u{7}b"), "a[0mb");
+        assert_eq!(typed("héllo 日本 🎉"), "héllo 日本 🎉");
+        assert_eq!(typed(""), "");
     }
 
     #[test]
