@@ -443,6 +443,7 @@ to `.git/info/exclude`, so it is never committed:
 ```text
 .phasewise/
   current                  id of the latest run
+  rate-limits.json         the latest usage limits the agent reported
   runs/<run-id>/
     state.json             phases, attempts, checkpoints, costs
     plan.md                the plan as it was when the run started

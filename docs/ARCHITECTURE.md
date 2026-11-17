@@ -63,6 +63,7 @@ check runs as a child process in its own process group.
 | `tui/shared.rs` | State and helpers both screens use (popups, footer items, spinner timing, the settings popup's state machine). |
 | `tui/data.rs` | Read-only loaders: home data, run, diff, log and checks. The agent log and the verify log are read from their end (4 MiB per attempt, 1 MiB), because the run screen reloads them several times a second. |
 | `tui/home_view.rs`, `tui/view.rs`, `tui/widgets.rs` | Rendering with ratatui: the home screen, the run screen, and the pieces they share. Covered by `insta` snapshots. |
+| `tui/screenshot.rs` | Turns a rendered frame into the SVG screenshots of the README (`readme_screenshots`, an ignored test). |
 
 Library code returns `anyhow::Result`, or a `thiserror` type where the caller
 must tell errors apart (plan errors). Every message that reaches the user says
