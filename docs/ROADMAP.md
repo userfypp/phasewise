@@ -27,12 +27,12 @@ Found in an audit and grouped by area:
 - [Run screen: fixes and missing features (tabs in diffs, long diffs, stale screen, chaining phases)](https://github.com/userfypp/phasewise/issues/83) (#83)
 - [Plan, timeout and settings validation (huge timeouts, BOM, empty titles)](https://github.com/userfypp/phasewise/issues/84) (#84)
 - [Handling of the checks' output](https://github.com/userfypp/phasewise/issues/85) (#85)
+- [`phasewise models` lists an effort (`ultra`) that `--effort`, plans and settings reject](https://github.com/userfypp/phasewise/issues/150) (#150)
 
 ## Later
 
 Features:
 
-- [Open a phase's diff in the user's editor or difftool](https://github.com/userfypp/phasewise/issues/37) (#37)
 - [Commands to run before a phase](https://github.com/userfypp/phasewise/issues/38) (#38)
 - [`--model` for the phases of the other agent in a mixed plan](https://github.com/userfypp/phasewise/issues/39) (#39)
 - [A separate diff per subagent](https://github.com/userfypp/phasewise/issues/47) (#47)
