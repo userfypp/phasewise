@@ -671,6 +671,7 @@ pub(super) mod tests {
         PlanState::Valid(PlanSummary {
             title: Some("Demo plan".into()),
             agent: AgentKind::Claude,
+            agent_open: false,
             model: Some("sonnet".into()),
             effort: None,
             phases: vec![

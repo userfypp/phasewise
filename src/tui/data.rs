@@ -300,6 +300,9 @@ pub struct HomePhase {
 pub struct PlanSummary {
     pub title: Option<String>,
     pub agent: AgentKind,
+    /// True when nothing in the plan points at an agent (no `agent` key, no
+    /// model), so the `agent` setting may choose it.
+    pub agent_open: bool,
     /// `model` / `effort` of the plan's front matter.
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -472,6 +475,12 @@ fn load_plan_state(path: &Path) -> PlanState {
         Ok(plan) => PlanState::Valid(PlanSummary {
             title: plan.title.clone(),
             agent: plan.config.agent,
+            agent_open: !plan.config.agent_set
+                && plan.config.model.is_none()
+                && plan
+                    .phases
+                    .iter()
+                    .all(|p| p.agent.is_none() && p.model.is_none()),
             model: plan.config.model.clone(),
             effort: plan.config.effort.clone(),
             phases: plan
@@ -533,5 +542,29 @@ mod tests {
             rel("/nonexistent/r/src/a/b", "/nonexistent/r/phasewise.md"),
             "../../../phasewise.md"
         );
+    }
+
+    #[test]
+    fn a_plan_is_open_to_the_agent_setting_only_when_nothing_in_it_points_at_an_agent() {
+        let dir = std::env::temp_dir().join(format!("phasewise-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let open = |text: &str| {
+            let path = dir.join("plan.md");
+            std::fs::write(&path, text).expect("write plan");
+            match load_plan_state(&path) {
+                PlanState::Valid(plan) => plan.agent_open,
+                _ => panic!("the plan should be valid"),
+            }
+        };
+        assert!(open("## A\n\nbody\n"));
+        assert!(!open("+++\nagent = \"claude\"\n+++\n## A\n\nbody\n"));
+        assert!(!open("+++\nmodel = \"opus\"\n+++\n## A\n\nbody\n"));
+        assert!(!open(
+            "## A\n\n```phasewise\nagent = \"codex\"\n```\n\nbody\n"
+        ));
+        assert!(!open(
+            "## A\n\n```phasewise\nmodel = \"opus\"\n```\n\nbody\n"
+        ));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -106,6 +106,8 @@ fn plan_value(key: &str, value: &str) -> Result<String, String> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanConfig {
     pub agent: AgentKind,
+    /// Whether the front matter sets `agent` (else it is the default, Claude).
+    pub agent_set: bool,
     pub verify: Vec<String>,
     pub max_retries: u32,
     pub phase_timeout_minutes: u64,
@@ -122,6 +124,7 @@ impl Default for PlanConfig {
     fn default() -> Self {
         PlanConfig {
             agent: AgentKind::Claude,
+            agent_set: false,
             verify: Vec::new(),
             max_retries: 1,
             phase_timeout_minutes: 60,
@@ -342,7 +345,10 @@ fn parse_front_matter(
     let mut config = PlanConfig::default();
     if let Some(agent) = raw.agent {
         match agent.parse() {
-            Ok(a) => config.agent = a,
+            Ok(a) => {
+                config.agent = a;
+                config.agent_set = true;
+            }
             Err(m) => errors.push(err(key_line(text, 2, fm_lines, "agent"), m)),
         }
     }
@@ -929,6 +935,16 @@ mod tests {
         assert_eq!(plan.config.phase_timeout_minutes, 5);
         assert_eq!(plan.config.verify_timeout_seconds, 7);
         assert_eq!(plan.config.agent_args, vec!["--x"]);
+    }
+
+    #[test]
+    fn the_plan_records_whether_it_names_an_agent() {
+        assert!(!ok("## A\n\nbody\n").config.agent_set);
+        assert!(
+            ok("+++\nagent = \"claude\"\n+++\n## A\n\nbody\n")
+                .config
+                .agent_set
+        );
     }
 
     #[test]

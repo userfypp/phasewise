@@ -207,6 +207,7 @@ fn four_phase_plan() -> PlanState {
     PlanState::Valid(PlanSummary {
         title: Some("Add a CSV export".into()),
         agent: AgentKind::Claude,
+        agent_open: false,
         model: Some("claude-sonnet-5-5".into()),
         effort: None,
         phases: vec![

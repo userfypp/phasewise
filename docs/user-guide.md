@@ -413,7 +413,7 @@ Keys phasewise does not know are left alone.
 | `limits` | `on`, `off` | Show the agent's [usage limits](#usage-limits) on the home and run screens and in `status` (`status --json` then reports no limits). |
 | `bell` | `off`, `on` | Ring the terminal bell when a phase reaches review or fails, or the run completes: on the run screen, and from `run`, `next` and `retry` when stderr is a terminal. |
 | `color` | `auto`, `never` | `never` behaves as if `NO_COLOR` were set. It can only turn colour off. |
-| `agent` | `plan`, `claude`, `codex` | The agent the home screen starts with when there is no valid plan; a valid plan's agent always wins. `plan` means the plan's, else Claude. |
+| `agent` | `plan`, `claude`, `codex` | The agent the home screen starts with when there is no valid plan, or when nothing in the plan points at an agent (no `agent` key, no `model`, no phase `agent` or `model`); a plan that names one keeps it. `plan` means the plan's, else Claude. |
 | `model` | free text, empty by default | The model the home screen starts with when the plan sets none (empty: the agent's own). |
 | `effort` | `default`, `low`, `medium`, `high`, `xhigh`, `max` | The effort the home screen starts with when the plan sets none. |
 

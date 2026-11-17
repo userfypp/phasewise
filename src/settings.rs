@@ -123,7 +123,7 @@ pub static REGISTRY: &[Spec] = &[
     Spec {
         key: "agent",
         label: "Agent",
-        description: "Agent the home screen starts with when the plan does not name one.",
+        description: "Agent the home screen starts with when the plan does not point at one.",
         kind: Kind::Choice(&["plan", "claude", "codex"]),
         default: "plan",
     },

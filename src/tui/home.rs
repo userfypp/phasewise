@@ -164,13 +164,17 @@ impl Home {
         Home::with_settings(data, Settings::default())
     }
 
-    /// The agent starts as the plan's when the plan is valid, else the one of
-    /// the settings, else Claude. The model and the effort of the settings are
+    /// The agent starts as the plan's when the plan is valid and points at one
+    /// (an `agent` key, a phase's `agent` or a model), else the one of the
+    /// settings, else Claude. The model and the effort of the settings are
     /// the starting choice only when the plan sets none.
     pub fn with_settings(data: HomeData, settings: Settings) -> Home {
         let (agent, model, effort) = match &data.plan {
             PlanState::Valid(plan) => (
-                plan.agent,
+                match settings.agent() {
+                    Some(agent) if plan.agent_open => agent,
+                    _ => plan.agent,
+                },
                 plan.model.is_none().then(|| settings.model()).flatten(),
                 plan.effort.is_none().then(|| settings.effort()).flatten(),
             ),
@@ -1052,6 +1056,7 @@ mod tests {
         PlanSummary {
             title: Some("Demo".into()),
             agent,
+            agent_open: false,
             model: Some("opus".into()),
             effort: Some("high".into()),
             phases: vec![HomePhase {
@@ -2101,6 +2106,11 @@ mod tests {
         );
         assert_eq!(h.agent, AgentKind::Claude);
         assert_eq!((h.model, h.effort), (None, None));
+        // A valid plan that points at no agent takes the settings' agent.
+        let mut open = summary(AgentKind::Claude);
+        open.agent_open = true;
+        let h = Home::with_settings(data(PlanState::Valid(open)), settings.clone());
+        assert_eq!(h.agent, AgentKind::Codex);
         // A valid plan that sets neither takes them from the settings.
         let mut bare = summary(AgentKind::Claude);
         bare.model = None;
