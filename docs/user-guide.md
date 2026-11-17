@@ -302,7 +302,7 @@ terminal UI.
 | `phasewise review` | Opens the run screen. |
 | `phasewise models` | Lists the models and effort levels of each agent. `--agent`. |
 | `phasewise settings [set KEY VALUE \| reset [KEY]]` | Shows, changes or resets your [settings](#settings). |
-| `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. |
+| `phasewise completions SHELL` | Prints a completion script for bash, zsh, fish, elvish or powershell. See [Shell completions](#shell-completions). |
 | `phasewise abort` | Abandons the run and returns to the original branch. |
 
 `--auto` approves every phase that passes its checks and continues until the
@@ -320,6 +320,40 @@ it; naming the plan's own agent changes nothing, so its phase blocks still apply
 
 Exit codes: `0` success, `1` usage or environment error, `3` a phase ended
 failed, `130` stopped by a second Ctrl-C.
+
+## Shell completions
+
+`phasewise completions SHELL` prints a script that completes subcommands, options and
+their values. Install it once, then open a new shell.
+
+**bash**: add this line to `~/.bashrc`. Use `eval`: `source <(…)` does not work in the
+bash 3.2 that macOS ships.
+
+```sh
+eval "$(phasewise completions bash)"
+```
+
+**zsh**: save the script in a directory of your `fpath` and make sure `compinit` runs
+after that directory is added, in `~/.zshrc`:
+
+```sh
+mkdir -p ~/.zfunc
+phasewise completions zsh > ~/.zfunc/_phasewise
+```
+
+```sh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+**fish**: fish loads every file in its completions directory.
+
+```sh
+phasewise completions fish > ~/.config/fish/completions/phasewise.fish
+```
+
+elvish and powershell scripts are generated too, but this guide does not cover them.
+Regenerate the script after you update phasewise, so that new options complete.
 
 ## Settings
 
