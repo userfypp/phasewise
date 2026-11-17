@@ -69,6 +69,8 @@ pub enum Command {
     Quit,
     Next,
     Retry(Option<String>),
+    /// Run the checks on the working tree of the failed phase and checkpoint it.
+    Accept,
     Rollback(usize),
     Interrupt,
     /// Abandon the run (`ops::abort`), already confirmed.
@@ -503,6 +505,10 @@ impl App {
                 }
                 Some(why) => self.refuse(why),
             },
+            KeyCode::Char('a') => match self.why_not_accept() {
+                None => Some(Command::Accept),
+                Some(why) => self.refuse(why),
+            },
             KeyCode::Char('b') => match self.why_not_rollback() {
                 None => {
                     self.selected_number()
@@ -597,7 +603,9 @@ impl App {
             return Some(why);
         }
         if let Some(n) = self.first_with(PhaseStatus::Failed) {
-            return Some(format!("Phase {n} failed: press r to retry it."));
+            return Some(format!(
+                "Phase {n} failed: press r to retry it, or a to accept your fixes."
+            ));
         }
         let can = self
             .view
@@ -620,6 +628,21 @@ impl App {
             .iter()
             .any(|p| matches!(p.status, PhaseStatus::Failed | PhaseStatus::AwaitingReview));
         (!can).then(|| "Nothing to retry: no phase failed or awaits review.".to_string())
+    }
+
+    fn why_not_accept(&self) -> Option<String> {
+        if !self.view.active {
+            return Some("The run is not active: nothing to accept.".to_string());
+        }
+        if let Some(why) = self.running_reason() {
+            return Some(why);
+        }
+        if self.worker_busy {
+            return Some("Wait for the running work to finish first.".to_string());
+        }
+        self.first_with(PhaseStatus::Failed)
+            .is_none()
+            .then(|| "Nothing to accept: no phase failed.".to_string())
     }
 
     fn why_not_rollback(&self) -> Option<String> {
@@ -680,6 +703,7 @@ impl App {
         } else if self.view.active && status == Some(PhaseStatus::Failed) {
             keys.extend([
                 item("r", "retry"),
+                item("a", "accept"),
                 item("b", "roll back"),
                 item("f", "failure"),
             ]);
@@ -708,6 +732,7 @@ impl App {
                 vec![
                     ("n", "approve the phase and run the next one"),
                     ("r", "retry the phase, with an optional note"),
+                    ("a", "accept your fixes of the failed phase"),
                     ("b", "roll back to the checkpoint of the phase"),
                     ("m", "merge the completed run into its branch"),
                     ("x", "interrupt the running phase"),
@@ -861,7 +886,10 @@ mod tests {
             phase(2, PhaseStatus::Failed, false),
         ]);
         assert_eq!(failed.handle_key(key('n')), None);
-        assert_eq!(text(&failed), Some("Phase 2 failed: press r to retry it."));
+        assert_eq!(
+            text(&failed),
+            Some("Phase 2 failed: press r to retry it, or a to accept your fixes.")
+        );
 
         let mut running = reviewing();
         running.running = Some(2);
@@ -934,6 +962,41 @@ mod tests {
         running.handle_key(key('r'));
         assert_eq!(running.mode, Mode::Normal);
         assert!(running.message.is_some());
+    }
+
+    #[test]
+    fn accept_works_on_a_failed_phase_and_is_refused_otherwise() {
+        let failed = || {
+            app(vec![
+                phase(1, PhaseStatus::Done, true),
+                phase(2, PhaseStatus::Failed, false),
+            ])
+        };
+        let mut a = failed();
+        assert_eq!(a.handle_key(key('a')), Some(Command::Accept));
+        // The selected phase need not be the failed one.
+        a.selected = 0;
+        assert_eq!(a.handle_key(key('a')), Some(Command::Accept));
+        assert!(keys(&failed()).contains(&"a".to_string()));
+
+        let mut none = reviewing();
+        assert_eq!(none.handle_key(key('a')), None);
+        assert!(text(&none).is_some_and(|m| m.contains("Nothing to accept")));
+
+        let mut running = failed();
+        running.running = Some(2);
+        assert_eq!(running.handle_key(key('a')), None);
+        assert!(text(&running).is_some_and(|m| m.contains("running")));
+
+        let mut busy = failed();
+        busy.worker_busy = true;
+        assert_eq!(busy.handle_key(key('a')), None);
+        assert!(busy.message.is_some());
+
+        let mut inactive = failed();
+        inactive.view.active = false;
+        assert_eq!(inactive.handle_key(key('a')), None);
+        assert!(text(&inactive).is_some_and(|m| m.contains("not active")));
     }
 
     #[test]
@@ -1047,7 +1110,7 @@ mod tests {
             phase(1, PhaseStatus::Done, true),
             phase(2, PhaseStatus::Failed, false),
         ]);
-        assert_eq!(keys(&failed), ["r", "b", "f", "tab", "esc", "q", "s"]);
+        assert_eq!(keys(&failed), ["r", "a", "b", "f", "tab", "esc", "q", "s"]);
         let mut other = reviewing();
         other.selected = 0;
         assert_eq!(keys(&other), ["j/k", "tab", "esc", "q", "s"]);

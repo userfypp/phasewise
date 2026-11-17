@@ -678,7 +678,7 @@ fn check_can_advance(run: &Run) -> Result<()> {
         .find(|p| p.status == PhaseStatus::Failed)
     {
         bail!(
-            "Phase {} failed. Run `phasewise retry` or `phasewise rollback {}`.",
+            "Phase {} failed. Run `phasewise accept` if you fixed it by hand, `phasewise retry` or `phasewise rollback {}`.",
             failed.number,
             failed.number - 1
         );
@@ -805,6 +805,46 @@ then `phasewise rollback 0` to start over.",
     overrides.apply(&mut run.state);
     run.state.save(&run.paths)?;
     run_one(run, number, note, events, cancel)
+}
+
+/// Runs the checks of the `failed` phase on the working tree as the user left
+/// it and, if they pass, checkpoints it (everything git does not ignore) and
+/// moves it to `awaiting_review`. Nothing is reset and no agent is launched.
+pub fn accept(
+    run: &mut Run,
+    events: &Sender<EngineEvent>,
+    cancel: &AtomicBool,
+) -> Result<PhaseStatus> {
+    let _lock = lock_and_reload(run)?;
+    check_active(run)?;
+    let number = run
+        .state
+        .phases
+        .iter()
+        .find(|p| p.status == PhaseStatus::Failed)
+        .map(|p| p.number)
+        .ok_or_else(|| {
+            anyhow!(
+                "Nothing to accept: no phase has failed. \
+Run `phasewise status` to see the run, or `phasewise next` to continue."
+            )
+        })?;
+    check_on_run_branch(run)?;
+    run.git.check_identity()?;
+    // Only the checks and the checkpoint run: the agent is never launched.
+    let agent = agent_for(phase_agent(&run.state, &run.plan, number));
+    let settings = settings(run)?;
+    let mut ctx = PhaseContext {
+        git: &run.git,
+        paths: &run.paths,
+        state: &mut run.state,
+        plan: &run.plan,
+        agent: agent.as_ref(),
+        settings: &settings,
+        events,
+        cancel,
+    };
+    crate::engine::accept_phase(&mut ctx, number)
 }
 
 /// Checks that `rollback k` can run and returns the SHA it goes back to. Does

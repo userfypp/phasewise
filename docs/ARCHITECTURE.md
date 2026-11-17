@@ -13,7 +13,7 @@ on-disk formats or the invariants below updates it in the same commit. For what 
                   │                                  │
                   └────────────────┬─────────────────┘
                                    ▼
-                                ops.rs            start, next, retry, rollback, merge,
+                                ops.rs            start, next, retry, accept, rollback, merge,
                                    │              abort, commit the plan, plan
                                    ▼
                               engine.rs           one phase: agent → checks → checkpoint
@@ -44,7 +44,7 @@ check runs as a child process in its own process group.
 |---|---|
 | `main.rs` | Only calls `cli::main()`. |
 | `cli.rs` | clap definitions, dispatch, printing events, exit codes. |
-| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. `run_one` picks the agent of each phase with `engine::phase_agent`. |
+| `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `accept`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. `run_one` picks the agent of each phase with `engine::phase_agent`. |
 | `engine.rs` | One phase cycle (`run_phase`) and the agent-following loop shared with planning (`run_agent_session`): spawn, stdin, reader thread, logs, timeout, cancel, leftovers. |
 | `plan.rs` | The plan model and parser (`pulldown-cmark` and `toml`), validation with line numbers, model and effort values. |
 | `prompt.rs` | Every text sent to an agent, and the extraction of a plan from an answer. Pure functions. |
@@ -119,7 +119,14 @@ The run id is the UTC time plus four random hex characters:
 | `verifying` | `awaiting_review` | Every check passed and the checkpoint was committed. |
 | `awaiting_review` | `done` | The user approved it. |
 | `failed`, `awaiting_review` | `running` | The user retried it. |
+| `failed` | `verifying` | The user accepted it (`accept`): no agent runs. |
 | any later phase | `pending` | The user rolled back to an earlier phase. |
+
+`accept` (`ops::accept`, `engine::accept_phase`) takes a `failed` phase of any
+kind that the user fixed by hand: it keeps attempts, cost and session, runs the
+same checks on the working tree as it is, and on success makes the checkpoint
+as in step 6 (`awaiting_review`); otherwise the phase is `failed` again, with
+`verify_failed` and the verify log. It resets nothing and launches no agent.
 
 A retry resets the tree to the previous checkpoint and runs the phase again in
 a fresh session, with the user's note if there is one. A rollback to phase k
@@ -156,7 +163,7 @@ changes, they are committed there first (`phasewise: abort — uncommitted
 changes`), so nothing is lost. phasewise then switches back to the original
 branch. The run branch is never deleted.
 
-`next`, `retry` and `abort` require the run branch to be checked out; `next`
+`next`, `retry`, `accept` and `abort` require the run branch to be checked out; `next`
 also requires a clean tree.
 
 ## Writing a plan

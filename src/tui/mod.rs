@@ -1039,6 +1039,12 @@ impl Tui<'_> {
                 ops::retry(run, note.as_deref(), &ops::Overrides::default(), tx, cancel)
                     .map(NextOutcome::Ran)
             }),
+            Command::Accept => {
+                self.spawn(|run, tx, cancel| ops::accept(run, tx, cancel).map(NextOutcome::Ran));
+                if self.worker.is_some() {
+                    self.app.message = Some(Notice::info("Running the checks on your fixes…"));
+                }
+            }
             Command::Merge => {
                 self.spawn_finished(|run, _tx, _cancel| ops::merge(run).map(Finished::Merged));
                 if self.worker.is_some() {
@@ -1143,6 +1149,14 @@ impl Tui<'_> {
                         self.app.follow(phase);
                     }
                     self.app.running = Some(phase);
+                    changed = true;
+                }
+                Ok(EngineEvent::VerifyStarted { phase, .. }) => {
+                    // `accept` runs the checks without starting a phase.
+                    if self.app.running.is_none() {
+                        self.app.follow(phase);
+                        self.app.running = Some(phase);
+                    }
                     changed = true;
                 }
                 Ok(EngineEvent::PhaseFinished { .. }) => {

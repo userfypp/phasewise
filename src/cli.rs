@@ -179,6 +179,12 @@ pub enum Command {
         settings: SettingsArgs,
     },
 
+    /// Run the checks on your working tree and checkpoint the failed phase you fixed by hand
+    #[command(
+        after_help = "Examples:\n  phasewise accept\n\nNo agent runs. Everything in the working tree that git does not ignore is committed."
+    )]
+    Accept,
+
     /// Go back to the checkpoint of phase N (0 = initial state)
     #[command(after_help = "Examples:\n  phasewise rollback 2\n  phasewise rollback 0 --yes")]
     Rollback {
@@ -356,6 +362,7 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             settings,
         }) => next_command(ops::Chain::from_flags(auto, until), &settings),
         Some(Command::Retry { note, settings }) => retry_command(note, &settings),
+        Some(Command::Accept) => accept_command(),
         Some(Command::Models { agent }) => models_command(agent),
         Some(Command::Completions { shell }) => completions(shell),
         Some(Command::Rollback { n, yes }) => rollback_command(n as usize, yes),
@@ -900,6 +907,24 @@ fn retry_command(note: Option<String>, settings: &SettingsArgs) -> Result<ExitCo
     })
 }
 
+fn accept_command() -> Result<ExitCode> {
+    let run = load_run()?;
+    if let Some(failed) = run
+        .state
+        .phases
+        .iter()
+        .find(|p| p.status == PhaseStatus::Failed)
+    {
+        outln!(
+            "Running the checks of phase {} on your working tree (no agent)...",
+            failed.number
+        );
+    }
+    drive(run, |run, events, cancel| {
+        ops::accept(run, events, cancel).map(NextOutcome::Ran)
+    })
+}
+
 fn short_sha(sha: &str) -> String {
     sha.chars().take(7).collect()
 }
@@ -1144,6 +1169,12 @@ fn print_failure(run: &Run) {
     outln!(
         "{}",
         st.dim("  phasewise retry [--note \"...\"]   rerun the phase in a new session")
+    );
+    outln!(
+        "{}",
+        st.dim(
+            "  phasewise accept                  run the checks on your fixes and checkpoint them"
+        )
     );
     outln!(
         "{}",
@@ -1526,7 +1557,7 @@ fn next_step_hint(run: &Run) -> String {
             let find = |status| state.phases.iter().find(|p| p.status == status);
             if let Some(p) = find(PhaseStatus::Failed) {
                 format!(
-                    "Next: `phasewise retry` or `phasewise rollback {}` (phase {} failed).",
+                    "Next: `phasewise accept` (after fixing it by hand), `phasewise retry` or `phasewise rollback {}` (phase {} failed).",
                     p.number - 1,
                     p.number
                 )

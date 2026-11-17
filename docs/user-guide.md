@@ -193,13 +193,14 @@ without a key. Then decide:
 | `r` | Retry: go back to the checkpoint before the phase and run it again in a new session. You can add a note for the agent. |
 | `b` | Roll back to the selected phase's checkpoint: later phases are discarded and become pending again. |
 | `f` | On a failed phase: open the whole failure (the list cuts it to eight lines) and the paths of the phase's logs, relative to the repository. `j`/`k` or the arrows scroll it; any other key closes it. |
+| `a` | Accept your hand fixes of a failed phase: run the checks on the working tree and, if they pass, checkpoint it (see Troubleshooting). |
 | `m` | Merge a completed run into your branch (see Finishing a run). |
 | `x` | Interrupt the phase that is running. |
 | `A` | Abandon the run (see below). |
 | `esc` | Back to the home screen. The run keeps going if a phase is running. |
 
 The same actions exist as commands: `phasewise next`, `retry --note "…"`,
-`rollback N`, `merge`, `diff [N]` and `status`. The screen follows them when
+`accept`, `rollback N`, `merge`, `diff [N]` and `status`. The screen follows them when
 you run them in another terminal: it checks the run about once a second (no
 key needed) and reloads when it changed, unless a phase it started is running.
 If the run's files are removed, it goes back to the home screen.
@@ -333,6 +334,7 @@ terminal UI.
 | `phasewise run [PLAN]` | Starts a run and runs phase 1. `--agent`, `--model`, `--effort`, `--auto`, `--until`. |
 | `phasewise next` | Approves the phase awaiting review and runs the next one. `--auto`, `--until`, `--model`, `--effort`. |
 | `phasewise retry` | Runs the current phase again from its starting checkpoint, discarding uncommitted changes. `--note`, `--model`, `--effort`. |
+| `phasewise accept` | For a failed phase you fixed by hand: runs the checks on your working tree (no agent) and, if they pass, commits the checkpoint and moves the phase to review. Exit code 3 if the checks fail. |
 | `phasewise rollback N` | Goes back to the checkpoint of phase N (0 = the start). `--yes` skips the question. |
 | `phasewise merge` | Squashes a completed run into the original branch and commits it. `--yes` skips the question. |
 | `phasewise status` | The run's agent (`claude (phase 3: codex)` when some phases use another one), the run's cost so far (against `max_cost_usd`, if set), the time the finished phases took, the last [usage limits](#usage-limits) Claude Code reported, and a table of phases: state, attempts, files, cost, time, model. A running phase shows the time so far; a phase that is retried or rolled back restarts its clock, so the time is that of its last attempt. `--json` prints the run as JSON for scripts (`null` when there is no run). |
@@ -473,6 +475,15 @@ Environment variables:
   Commits you made by hand on the run branch are protected: if `retry` or
   `rollback` would drop one that is on no other branch or tag, it refuses and
   changes nothing. Run `git branch keep-my-work`, then repeat the command.
+  To keep a fix you made by hand instead, edit the working tree and run
+  `phasewise accept` (or press `a`): no agent runs, the plan's checks run on
+  your tree and, if they pass, everything git does not ignore (new files
+  included) is committed as the phase's checkpoint and the phase goes to
+  review. If they fail, the phase stays failed and the failure names the
+  verify log. It works for every kind of failure, since the checks decide.
+  Do not commit your fixes yourself: `accept` commits them for you. A commit
+  you made by hand in the failed phase counts as the phase's own afterwards,
+  and a later `retry` or `rollback` drops it without the usual warning.
 - **"another git process is using the repository"**: an editor or another
   terminal is running git. phasewise waits a few seconds; if the lock stays,
   close that tool, or delete `.git/index.lock` if no git command is running,
@@ -503,7 +514,7 @@ all keys · `q` quit. While a plan is being written: `esc` stops it.
 the left and right arrows by 8 columns, `g`/`G` or `Home`/`End` jump to its top
 or bottom (`G` on the log of a running phase follows it again), `/` searches it
 (case-insensitive; an empty search clears it) and `]`/`[` go to the next and
-previous match · `n` approve · `r` retry · `b` roll back · `f` the whole failure and its logs · `m` merge a
+previous match · `n` approve · `r` retry · `a` accept your fixes of a failed phase · `b` roll back · `f` the whole failure and its logs · `m` merge a
 completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
 all keys · `q` quit.
 

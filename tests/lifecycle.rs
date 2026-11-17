@@ -250,6 +250,117 @@ fn retry_with_nothing_to_retry_exits_1() {
 }
 
 #[test]
+fn accept_checkpoints_a_failed_phase_fixed_by_hand_without_the_agent() {
+    let env = Env::new();
+    let envs = [("FAKE_MODE", "never_fixes")];
+    assert_eq!(env.exec(&["run"], &envs).code, 3);
+    let calls_before = env.calls().len();
+    let attempts = env.state()["phases"][0]["attempts"].clone();
+    env.repo.write("phase-1.txt", "phase 1\n");
+    env.repo.write("extra.txt", "by hand\n");
+
+    let out = env.ok(&["accept"], &envs);
+    assert!(out.stdout.contains("ready for review"), "{}", out.stdout);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+    assert_eq!(env.checkpoint(1), env.repo.git_trim(&["rev-parse", "HEAD"]));
+    let state = env.state();
+    assert_eq!(state["phases"][0]["attempts"], attempts);
+    assert!(state["phases"][0]["failure"].is_null());
+    assert!(env.repo.git(&["status", "--porcelain"]).trim().is_empty());
+    assert!(
+        env.repo
+            .git(&["show", "--name-only", "--format=", "HEAD"])
+            .contains("extra.txt")
+    );
+    assert_eq!(
+        env.repo.git_trim(&["log", "-1", "--format=%s"]),
+        "phasewise: phase 1 \u{2014} First"
+    );
+    assert_eq!(env.calls().len(), calls_before);
+
+    env.ok(&["next"], &[]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+    env.check_invariants();
+}
+
+#[test]
+fn accept_without_a_fix_keeps_the_phase_failed() {
+    let env = Env::new();
+    let envs = [("FAKE_MODE", "never_fixes")];
+    assert_eq!(env.exec(&["run"], &envs).code, 3);
+    let head = env.repo.git_trim(&["rev-parse", "HEAD"]);
+
+    let out = env.exec(&["accept"], &envs);
+    assert_eq!(out.code, 3, "{}\n{}", out.stdout, out.stderr);
+    assert_eq!(env.statuses()[0], "failed");
+    let failure = env.state()["phases"][0]["failure"].clone();
+    assert_eq!(failure["kind"], "verify_failed");
+    assert!(
+        failure["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("phase-01.verify.log"),
+        "{failure}"
+    );
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), head);
+    assert!(!env.repo.git(&["status", "--porcelain"]).trim().is_empty());
+    env.check_invariants();
+}
+
+#[test]
+fn accept_refuses_what_it_cannot_accept_and_changes_nothing() {
+    // No run.
+    let env = Env::new();
+    let out = env.exec(&["accept"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+
+    // A phase awaiting review is not a failed one.
+    env.ok(&["run"], &[]);
+    let head = env.repo.git_trim(&["rev-parse", "HEAD"]);
+    let out = env.exec(&["accept"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("Nothing to accept"), "{}", out.stderr);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), head);
+
+    // A completed run.
+    let done = completed_env();
+    let out = done.exec(&["accept"], &[]);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(out.stderr.contains("not active"), "{}", out.stderr);
+
+    // Off the run branch.
+    let off = Env::new();
+    let envs = [("FAKE_MODE", "never_fixes")];
+    assert_eq!(off.exec(&["run"], &envs).code, 3);
+    off.repo.write("phase-1.txt", "phase 1\n");
+    off.repo.git(&["stash", "--include-untracked"]);
+    off.repo.git(&["switch", "main"]);
+    let out = off.exec(&["accept"], &envs);
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert!(
+        out.stderr.contains("git switch phasewise/"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(off.statuses()[0], "failed");
+    off.check_invariants();
+}
+
+#[test]
+fn accept_works_after_an_agent_error_fixed_by_hand() {
+    let env = Env::new();
+    let envs = [("FAKE_MODE", "fail")];
+    assert_eq!(env.exec(&["run"], &envs).code, 3);
+    assert_eq!(env.state()["phases"][0]["failure"]["kind"], "agent_error");
+    env.repo.write("phase-1.txt", "phase 1\n");
+    env.ok(&["accept"], &envs);
+    assert_eq!(env.statuses(), ["awaiting_review", "pending", "pending"]);
+    assert!(env.state()["phases"][0]["failure"].is_null());
+    env.check_invariants();
+}
+
+#[test]
 fn retry_that_fails_again_exits_3() {
     let env = Env::new();
     let envs = [("FAKE_MODE", "never_fixes")];

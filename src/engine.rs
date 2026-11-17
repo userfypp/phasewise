@@ -22,7 +22,7 @@ use crate::state::{
     Failure, FailureKind, PhaseStatus, RateLimits, RunPaths, RunState, record_group,
     truncate_summary,
 };
-use crate::verify::{self, VerifyEvent, VerifyOutcome};
+use crate::verify::{self, FailedCommand, VerifyEvent, VerifyOutcome};
 
 const POLL: Duration = Duration::from_millis(50);
 const EOF_WAIT: Duration = Duration::from_secs(2);
@@ -248,6 +248,66 @@ pub struct AgentSession<'a> {
     pub cancel: &'a AtomicBool,
 }
 
+/// Title of a phase and the checks that gate it: the plan's, then the phase's.
+fn phase_checks(plan: &Plan, phase: usize) -> Result<(String, Vec<String>)> {
+    let plan_phase = plan
+        .phases
+        .iter()
+        .find(|p| p.number == phase)
+        .ok_or_else(|| anyhow!(
+                "Phase {phase} does not exist in the plan copy of this run. Start a new run with `phasewise run`"
+            ))?;
+    let mut commands = plan.config.verify.clone();
+    commands.extend(plan_phase.verify.iter().cloned());
+    Ok((plan_phase.title.clone(), commands))
+}
+
+fn failure_what(failed: &FailedCommand) -> String {
+    if failed.timed_out {
+        format!("timed out after {} s", failed.timeout_secs)
+    } else {
+        match failed.exit_code {
+            Some(code) => format!("exit code {code}"),
+            None => "terminated by a signal".to_string(),
+        }
+    }
+}
+
+/// The failure text of a check that failed, with the path of its log.
+fn verify_failure_detail(failed: &FailedCommand, log: &Path) -> String {
+    format!(
+        "`{}` failed ({}). Output: {}",
+        failed.command,
+        failure_what(failed),
+        log.display()
+    )
+}
+
+/// Runs the checks of a failed phase on the working tree as the user left it
+/// and, if they pass, checkpoints it. No agent is launched. The caller must
+/// hold the run lock.
+pub fn accept_phase(ctx: &mut PhaseContext, phase: usize) -> Result<PhaseStatus> {
+    let (title, commands) = phase_checks(ctx.plan, phase)?;
+    let state = ctx.phase_state(phase)?;
+    state.status = PhaseStatus::Verifying;
+    state.failure = None;
+    state.finished_at = None;
+    let attempts = state.attempts;
+    ctx.save()?;
+    match run_verification(ctx, phase, attempts, &commands)? {
+        VerifyOutcome::Passed => checkpoint(ctx, phase, &title),
+        VerifyOutcome::Cancelled => ctx.fail(
+            phase,
+            FailureKind::Interrupted,
+            "interrupted by the user during verification".to_string(),
+        ),
+        VerifyOutcome::Failed(failed) => {
+            let detail = verify_failure_detail(&failed, &ctx.paths.verify_log(phase));
+            ctx.fail(phase, FailureKind::VerifyFailed, detail)
+        }
+    }
+}
+
 /// Runs one phase until it is `awaiting_review` or `failed`. The caller must
 /// hold the run lock (`LockGuard`).
 pub fn run_phase(
@@ -256,17 +316,7 @@ pub fn run_phase(
     note: Option<&str>,
 ) -> Result<PhaseStatus> {
     let phase = phase_number;
-    let plan_phase = ctx
-        .plan
-        .phases
-        .iter()
-        .find(|p| p.number == phase)
-        .ok_or_else(|| anyhow!(
-                "Phase {phase} does not exist in the plan copy of this run. Start a new run with `phasewise run`"
-            ))?;
-    let title = plan_phase.title.clone();
-    let mut verify_commands = ctx.plan.config.verify.clone();
-    verify_commands.extend(plan_phase.verify.iter().cloned());
+    let (title, verify_commands) = phase_checks(ctx.plan, phase)?;
 
     let completed: Vec<(usize, String, String)> = ctx
         .state
@@ -340,22 +390,11 @@ pub fn run_phase(
             VerifyOutcome::Failed(failed) => failed,
         };
 
-        let what = if failed.timed_out {
-            format!("timed out after {} s", failed.timeout_secs)
-        } else {
-            match failed.exit_code {
-                Some(code) => format!("exit code {code}"),
-                None => "terminated by a signal".to_string(),
-            }
-        };
         if retries_used >= ctx.settings.max_retries {
-            let detail = format!(
-                "`{}` failed ({what}). Output: {}",
-                failed.command,
-                ctx.paths.verify_log(phase).display()
-            );
+            let detail = verify_failure_detail(&failed, &ctx.paths.verify_log(phase));
             return ctx.fail(phase, FailureKind::VerifyFailed, detail);
         }
+        let what = failure_what(&failed);
         if let Some(limit) = ctx.settings.max_cost_usd
             && let Some((spent, limit)) = cost_limit_reached(ctx.state.cost_usd(), limit)
         {
@@ -765,7 +804,8 @@ fn checkpoint(ctx: &mut PhaseContext, phase: usize, title: &str) -> Result<Phase
         let now_on = current.unwrap_or_else(|| "a detached HEAD".to_string());
         let detail = format!(
             "The verification commands left the repository on {now_on} instead of {run_branch}, \
-so no checkpoint was created. Run `git switch {run_branch}`, then `phasewise retry`"
+so no checkpoint was created. Run `git switch {run_branch}`, then `phasewise accept` \
+(or `phasewise retry` to run the phase again)"
         );
         return ctx.fail(phase, FailureKind::CheckpointFailed, detail);
     }
@@ -781,7 +821,7 @@ so no checkpoint was created. Run `git switch {run_branch}`, then `phasewise ret
             let detail = format!(
                 "phasewise could not create the checkpoint commit: {err:#}. \
 The phase's changes are still in the working tree. Fix the cause, then run \
-`phasewise retry` to run the phase again"
+`phasewise accept` to checkpoint them (or `phasewise retry` to run the phase again)"
             );
             return ctx.fail(phase, FailureKind::CheckpointFailed, detail);
         }
