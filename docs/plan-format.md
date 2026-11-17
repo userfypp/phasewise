@@ -171,7 +171,16 @@ line, and exits with code 1:
 - unknown `agent`, in the front matter or in a phase block (the valid values are listed);
 - `phase_timeout_minutes` (in the front matter or a phase block) or `verify_timeout_seconds` below 1 or above a year, or `max_cost_usd` not above 0;
 - a plan with no phases;
-- a phase with an empty title or an empty body;
+- front matter whose `+++` is not exactly the first line of the file (a blank
+  line or a space around it), and YAML front matter (`---` with `key: value`
+  lines), which is not supported;
+- empty or blank entries in `verify` or `agent_args` in the front matter, and
+  `verify` entries that start with `#` (comments only work inside `verify` blocks);
+- a phase with an empty title or an empty body, or a title with control
+  characters or invisible Unicode characters (zero-width spaces, bidirectional
+  overrides, a byte order mark, ...);
+- a fenced block that looks like a `verify` or `phasewise` block but whose info
+  string is not exactly that word (`Verify`, `verify:`, `{verify}`, `sh verify`);
 - duplicate phase titles (reported at the second one, with the first one's line);
 - a `verify` block before the first phase;
 - an invalid `model` or `effort`, or the value `default`;

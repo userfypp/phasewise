@@ -277,6 +277,23 @@ pub fn parse(text: &str) -> Result<Plan, Vec<PlanError>> {
     let mut config = PlanConfig::default();
     let mut body_start = 0;
 
+    if text.lines().next().map(|l| l.trim_end_matches('\r')) != Some("+++")
+        && let Some((index, first)) = text.lines().enumerate().find(|(_, l)| !l.trim().is_empty())
+    {
+        let line = index + 1;
+        if first.trim() == "+++" {
+            errors.push(err(
+                line,
+                "front matter must be exactly `+++` on the very first line of the file; remove the blank lines and spaces around it",
+            ));
+        } else if looks_like_yaml_front_matter(text, index) {
+            return Err(vec![err(
+                line,
+                "YAML front matter is not supported: put the settings between `+++` lines as TOML",
+            )]);
+        }
+    }
+
     if text.lines().next().map(|l| l.trim_end_matches('\r')) == Some("+++") {
         // Byte offset of every line start.
         let mut offset = 0;
@@ -329,6 +346,38 @@ pub fn parse(text: &str) -> Result<Plan, Vec<PlanError>> {
     Err(errors)
 }
 
+/// Whether the `---` at line index `start` opens a YAML front matter: a closing
+/// `---` follows and every line between them is `key: value` (or blank). A
+/// thematic break or a setext underline never has that shape.
+fn looks_like_yaml_front_matter(text: &str, start: usize) -> bool {
+    let mut keys = 0;
+    let mut lines = text.lines().skip(start);
+    if lines.next().map(str::trim) != Some("---") {
+        return false;
+    }
+    for line in lines {
+        let line = line.trim();
+        if line == "---" {
+            return keys > 0;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let Some((key, rest)) = line.split_once(':') else {
+            return false;
+        };
+        let key_ok = !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+        if !key_ok || !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+            return false;
+        }
+        keys += 1;
+    }
+    false
+}
+
 fn parse_front_matter(
     text: &str,
     fm_text: &str,
@@ -356,6 +405,26 @@ fn parse_front_matter(
         }
     }
     if let Some(v) = raw.verify {
+        for (i, entry) in v.iter().enumerate() {
+            let line = key_line(text, 2, fm_lines, "verify");
+            if entry.trim().is_empty() {
+                errors.push(err(
+                    line,
+                    format!(
+                        "`verify` entry {} is empty; write a command or remove the entry",
+                        i + 1
+                    ),
+                ));
+            } else if entry.trim_start().starts_with('#') {
+                errors.push(err(
+                    line,
+                    format!(
+                        "`verify` entry {} starts with `#`, but comments are not allowed in the front matter list (only inside `verify` blocks); remove the entry",
+                        i + 1
+                    ),
+                ));
+            }
+        }
         config.verify = v;
     }
     if let Some(v) = raw.max_retries {
@@ -406,6 +475,17 @@ fn parse_front_matter(
     if let Some(v) = raw.agent_args {
         // A NUL byte cannot be passed to a program: the run would fail at the
         // start of the first phase, after the plan passed `check`.
+        for (i, arg) in v.iter().enumerate() {
+            if arg.is_empty() {
+                errors.push(err(
+                    key_line(text, 2, fm_lines, "agent_args"),
+                    format!(
+                        "`agent_args` entry {} is empty; write an argument or remove the entry",
+                        i + 1
+                    ),
+                ));
+            }
+        }
         if v.iter().any(|a| a.contains('\0')) {
             errors.push(err(
                 key_line(text, 2, fm_lines, "agent_args"),
@@ -584,6 +664,23 @@ fn strip_phase_prefix(title: &str, position: usize) -> String {
     keep()
 }
 
+/// The label (`verify` or `phasewise`) a fence's info string is a near-miss of:
+/// one of its words equals the label apart from case, a trailing `:` or
+/// surrounding braces, but the info string is not exactly the label.
+fn lookalike_label(info: &str) -> Option<&'static str> {
+    if info == "verify" || info == "phasewise" {
+        return None;
+    }
+    info.split_whitespace().find_map(|word| {
+        let word = word
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim_end_matches(':')
+            .to_lowercase();
+        ["verify", "phasewise"].into_iter().find(|l| word == *l)
+    })
+}
+
 struct PhaseHeading {
     title: String,
     range: Range<usize>,
@@ -628,6 +725,21 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) if &*info == "phasewise" => {
                 in_settings = Some((range, String::new()));
+            }
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                if let Some(label) = lookalike_label(&info) {
+                    let what = if label == "verify" {
+                        "verify"
+                    } else {
+                        "`phasewise` settings"
+                    };
+                    errors.push(err(
+                        line_of(text, range.start),
+                        format!(
+                            "this block looks like a {what} block but its info string is not exactly `{label}`; write the opening fence as ```{label} on its own, or change the word if it is not meant as one"
+                        ),
+                    ));
+                }
             }
             Event::Text(t) => {
                 if let Some((_, content)) = in_verify.as_mut() {
@@ -751,6 +863,23 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
         ));
     }
     for phase in &phases {
+        if !phase.title.is_empty() && phase.title.chars().all(is_invisible) {
+            errors.push(err(
+                phase.line,
+                format!(
+                    "phase {} has no title; write the title after `##` on its heading (it only has control or invisible characters)",
+                    phase.number
+                ),
+            ));
+        } else if phase.title.chars().any(is_invisible) {
+            errors.push(err(
+                phase.line,
+                format!(
+                    "the title of phase {} contains a control or invisible character (such as a zero-width space or a bidirectional override); remove it",
+                    phase.number
+                ),
+            ));
+        }
         if phase.title.is_empty() {
             errors.push(err(
                 phase.line,
@@ -790,6 +919,29 @@ fn parse_body(text: &str, body_start: usize) -> Result<Parsed, Vec<PlanError>> {
     } else {
         Err(errors)
     }
+}
+
+/// Control characters and Unicode format characters (category Cf) that do not
+/// show up in a title.
+fn is_invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0001}'
+                | '\u{E0020}'..='\u{E007F}'
+        )
 }
 
 /// Settings read from a phase's `phasewise` block.
@@ -969,8 +1121,8 @@ mod tests {
 
     #[test]
     fn front_matter_only_on_line_one() {
-        // `+++` on line 2 is not front matter: it is plain body text.
-        let plan = ok("\n+++\nagent = \"codex\"\n+++\n## A\n\nbody\n");
+        // `+++` after other text is not front matter: it is plain body text.
+        let plan = ok("# T\n\n+++\nagent = \"codex\"\n+++\n## A\n\nbody\n");
         assert_eq!(plan.config.agent, AgentKind::Claude);
         assert!(plan.context.contains("agent = \"codex\""));
     }
@@ -1264,9 +1416,136 @@ mod tests {
 
     #[test]
     fn verify_label_must_be_exact() {
-        let plan = ok("## A\n\n```verify extra\nx\n```\n\n```Verify\ny\n```\n");
+        let plan = ok("## A\n\n```verifyx\nx\n```\n\n```sh\nverify\n```\n");
         assert!(plan.phases[0].verify.is_empty());
-        assert!(plan.phases[0].body.contains("```Verify"));
+        assert!(plan.phases[0].body.contains("```sh\nverify\n```"));
+    }
+
+    #[test]
+    fn a_fence_that_looks_like_a_verify_block_is_an_error() {
+        for info in ["Verify", "verify:", "sh verify", "{verify}", "verify extra"] {
+            let e = errs(&format!("## A\n\ntext\n\n```{info}\nx\n```\n"));
+            assert_eq!(e.len(), 1, "{info}: {e:?}");
+            assert_eq!(e[0].0, 5, "{info}");
+            assert!(
+                e[0].1.contains("looks like a verify block")
+                    && e[0].1.contains("not exactly `verify`"),
+                "{}",
+                e[0].1
+            );
+        }
+    }
+
+    #[test]
+    fn a_fence_that_looks_like_a_settings_block_is_an_error() {
+        for info in ["Phasewise", "phasewise:", "toml phasewise", "{phasewise}"] {
+            let e = errs(&format!("## A\n\ntext\n\n```{info}\nx\n```\n"));
+            assert_eq!(e.len(), 1, "{info}: {e:?}");
+            assert_eq!(e[0].0, 5, "{info}");
+            assert!(e[0].1.contains("not exactly `phasewise`"), "{}", e[0].1);
+        }
+    }
+
+    #[test]
+    fn ordinary_fences_stay_valid() {
+        let plan =
+            ok("## A\n\ntext\n\n```sh\nverify the build\n```\n\n```rust\nfn verify() {}\n```\n");
+        assert!(plan.phases[0].body.contains("fn verify()"));
+    }
+
+    #[test]
+    fn a_title_with_control_or_invisible_characters_is_an_error() {
+        for bad in [
+            "\u{200b}", "\u{202e}", "\u{2066}", "\u{feff}", "\u{7}", "\u{ad}",
+        ] {
+            let e = errs(&format!("## Ti{bad}tle\n\nbody\n"));
+            assert_eq!(e.len(), 1, "{bad:?}: {e:?}");
+            assert_eq!(e[0].0, 1);
+            assert!(
+                e[0].1.contains("control or invisible character"),
+                "{}",
+                e[0].1
+            );
+            assert!(e[0].1.contains("remove it"), "{}", e[0].1);
+        }
+    }
+
+    #[test]
+    fn a_title_of_only_invisible_characters_counts_as_empty() {
+        let e = errs("## \u{200b}\u{200b}\n\nbody\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert!(e[0].1.contains("has no title"), "{}", e[0].1);
+    }
+
+    #[test]
+    fn emoji_and_non_ascii_letters_are_fine_in_a_title() {
+        let plan = ok("## Ship it \u{1F680}\n\nbody\n\n## Añadir señal ñ\n\nbody\n");
+        assert_eq!(plan.phases[0].title, "Ship it \u{1F680}");
+        assert_eq!(plan.phases[1].title, "Añadir señal ñ");
+    }
+
+    #[test]
+    fn front_matter_not_on_the_first_line_is_an_error() {
+        for text in [
+            "\n+++\nagent = \"codex\"\n+++\n## A\n\nx\n",
+            "+++ \nagent = \"codex\"\n+++\n## A\n\nx\n",
+        ] {
+            let e = errs(text);
+            assert!(
+                e.iter().any(|(line, m)| *line
+                    == text.lines().position(|l| l.trim() == "+++").unwrap() + 1
+                    && m.contains("exactly `+++` on the very first line")),
+                "{e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn yaml_front_matter_is_reported() {
+        let e = errs("---\ntitle: Plan\nagent: codex\n---\n\n## A\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].0, 1);
+        assert!(
+            e[0].1.contains("YAML front matter is not supported"),
+            "{}",
+            e[0].1
+        );
+        let e = errs("\n---\nagent: codex\n---\n");
+        assert_eq!(e[0].0, 2);
+    }
+
+    #[test]
+    fn a_thematic_break_is_not_yaml_front_matter() {
+        let plan = ok("---\n\n## A\n\ntext\n\n---\n\nmore\n");
+        assert_eq!(plan.phases.len(), 1);
+        let plan = ok("---\n\nIntro text: here\nmore\n\n---\n\n## A\n\nx\n");
+        assert_eq!(plan.phases.len(), 1);
+        let plan = ok("# T\n\n---\n\nagent: x\n\n---\n\n## A\n\nx\n");
+        assert_eq!(plan.phases.len(), 1);
+    }
+
+    #[test]
+    fn blank_or_comment_verify_entries_in_the_front_matter_are_errors() {
+        let e = errs("+++\nverify = [\"cargo test\", \"  \", \"\"]\n+++\n## A\n\nx\n");
+        assert_eq!(e.len(), 2, "{e:?}");
+        assert_eq!(e[0].0, 2);
+        assert!(e[0].1.contains("entry 2 is empty"), "{}", e[0].1);
+        assert!(e[1].1.contains("entry 3 is empty"), "{}", e[1].1);
+        let e = errs("+++\nverify = [\"# note\"]\n+++\n## A\n\nx\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert!(e[0].1.contains("comments are not allowed"), "{}", e[0].1);
+    }
+
+    #[test]
+    fn an_empty_agent_args_entry_is_an_error() {
+        let e = errs("+++\nagent_args = [\"--x\", \"\"]\n+++\n## A\n\nx\n");
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].0, 2);
+        assert!(
+            e[0].1.contains("`agent_args` entry 2 is empty"),
+            "{}",
+            e[0].1
+        );
     }
 
     #[test]
