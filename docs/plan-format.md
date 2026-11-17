@@ -27,7 +27,7 @@ Every key is optional.
 | `verify` | array of strings | `[]` | Commands run after every phase. |
 | `max_retries` | integer >= 0 | `1` | Automatic retries when verification fails. |
 | `phase_timeout_minutes` | integer, 1 to 525600 | `60` | Time limit for the agent in one phase; a phase's settings block can override it. |
-| `verify_timeout_seconds` | integer, 1 to 31536000 | `600` | Time limit for each verification command. |
+| `verify_timeout_seconds` | integer, 1 to 31536000 | `600` | Time limit for each verification command. A command that writes more than 64 MiB is stopped and fails. |
 | `max_cost_usd` | number > 0 | unset | Spending limit for the whole run, in US dollars; see [Spending limit](#spending-limit). |
 | `agent_args` | array of strings | `[]` | Extra arguments for the agent command line. |
 | `model` | string | unset | Model for every phase; see [Model and effort](#model-and-effort). |

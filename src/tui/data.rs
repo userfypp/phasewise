@@ -273,12 +273,37 @@ pub fn load_log(run: &Run, phase: usize) -> Vec<LogLine> {
     lines
 }
 
-/// Content of the verification log of `phase`.
+/// Most bytes of the end of a verification log the screen loads.
+const VERIFY_WINDOW: u64 = 1024 * 1024;
+
+/// Content of the verification log of `phase`: the whole log, or its last
+/// `VERIFY_WINDOW` bytes with a line saying so, however much the checks wrote.
 pub fn load_verify(run: &Run, phase: usize) -> String {
-    match std::fs::read(run.paths.verify_log(phase)) {
-        Ok(bytes) if !bytes.is_empty() => String::from_utf8_lossy(&bytes).into_owned(),
-        _ => NO_VERIFY.to_string(),
+    read_log_end(&run.paths.verify_log(phase), VERIFY_WINDOW)
+        .unwrap_or_else(|| NO_VERIFY.to_string())
+}
+
+fn read_log_end(path: &Path, window: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len == 0 {
+        return None;
     }
+    let from = len.saturating_sub(window);
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(window).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    if from == 0 {
+        return Some(text.into_owned());
+    }
+    // The window starts in the middle of a line: show it from the next one.
+    let rest = text.find('\n').map_or("", |i| &text[i + 1..]);
+    Some(format!(
+        "(only the end of the log is shown; the whole file is {})\n{rest}",
+        path.display()
+    ))
 }
 
 /// One phase of the plan shown on the home screen.
@@ -565,6 +590,25 @@ mod tests {
         assert!(!open(
             "## A\n\n```phasewise\nmodel = \"opus\"\n```\n\nbody\n"
         ));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_huge_verify_log_is_loaded_from_its_end() {
+        let dir = std::env::temp_dir().join(format!("phasewise-vlog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let log = dir.join("verify.log");
+        assert_eq!(read_log_end(&log, 20), None);
+        std::fs::write(&log, "short\n").expect("write");
+        assert_eq!(read_log_end(&log, 20).as_deref(), Some("short\n"));
+        std::fs::write(&log, "first line\nsecond line\nthird line\n").expect("write");
+        let shown = read_log_end(&log, 20).expect("log");
+        assert!(
+            shown.starts_with("(only the end of the log is shown;"),
+            "{shown}"
+        );
+        assert!(shown.ends_with("\nthird line\n"), "{shown}");
+        assert!(!shown.contains("first line"), "{shown}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

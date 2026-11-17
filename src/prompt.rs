@@ -77,10 +77,13 @@ pub fn verify_failure_report(
     exit_code: Option<i32>,
     timed_out: bool,
     timeout_secs: u64,
+    too_much_output: bool,
     output_tail: &str,
 ) -> String {
     let what = if timed_out {
         format!("timed out after {timeout_secs} s")
+    } else if too_much_output {
+        format!("was stopped: {}", crate::verify::output_limit_text())
     } else {
         match exit_code {
             Some(code) => format!("failed with exit code {code}"),
@@ -427,18 +430,23 @@ Do the second thing.
 
     #[test]
     fn failure_report_variants() {
-        let r = verify_failure_report("make", Some(2), false, 600, "boom\n");
+        let r = verify_failure_report("make", Some(2), false, 600, false, "boom\n");
         assert!(r.contains("`make` failed with exit code 2"));
         assert!(r.contains("```\nboom\n```"));
-        let r = verify_failure_report("make", None, true, 30, "");
+        let r = verify_failure_report("make", None, true, 30, false, "");
         assert!(r.contains("timed out after 30 s"));
-        let r = verify_failure_report("make", None, false, 30, "x");
+        let r = verify_failure_report("make", None, false, 30, false, "x");
         assert!(r.contains("terminated by a signal"));
+        let r = verify_failure_report("make", None, false, 30, true, "x");
+        assert!(
+            r.contains("`make` was stopped: its output went over 64 MiB."),
+            "{r}"
+        );
     }
 
     #[test]
     fn retry_prompts_include_report() {
-        let report = verify_failure_report("make", Some(1), false, 1, "err");
+        let report = verify_failure_report("make", Some(1), false, 1, false, "err");
         assert!(resume_prompt(&report).contains(&report));
         let fresh = fresh_retry_prompt("PHASE\n", &report);
         assert!(fresh.starts_with("PHASE\n\n## Previous attempt failed verification\n"));

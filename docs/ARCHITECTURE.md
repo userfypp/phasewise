@@ -50,7 +50,7 @@ check runs as a child process in its own process group.
 | `prompt.rs` | Every text sent to an agent, and the extraction of a plan from an answer. Pure functions. |
 | `agent/mod.rs` | The `Agent` and `AgentParser` traits, `AgentEvent`, `LaunchOptions`, `ModelInfo`. |
 | `agent/claude.rs`, `agent/codex.rs` | Command lines, model lists and output parsers, one file per agent. |
-| `verify.rs` | Runs the checks with a timeout and writes `verify.log`. |
+| `verify.rs` | Runs the checks with a timeout and an output limit (64 MiB each) and writes `verify.log`. |
 | `git.rs` | The only module that runs git. |
 | `state.rs` | `state.json`, the `.phasewise` layout, atomic writes, the run lock and recovery. |
 | `process.rs` | Process groups, termination, signals, the panic hook, the closed-terminal watch. |

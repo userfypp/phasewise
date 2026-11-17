@@ -378,6 +378,7 @@ fn verify_lines(text: &str) -> Vec<Line<'static>> {
                         Some(("✓", Role::Ok))
                     } else if l.starts_with("exit code: ")
                         || l.starts_with("timed out after ")
+                        || l.starts_with("stopped: ")
                         || *l == "interrupted"
                     {
                         Some(("✗", Role::Fail))
@@ -395,6 +396,7 @@ fn verify_lines(text: &str) -> Vec<Line<'static>> {
             out.push(Line::styled(line.to_string(), role_style(Role::Dim)));
         } else if (line.starts_with("exit code: ") && line != "exit code: 0")
             || line.starts_with("timed out after ")
+            || line.starts_with("stopped: ")
             || line == "interrupted"
         {
             out.push(Line::styled(line.to_string(), role_style(Role::Fail)));

@@ -265,6 +265,8 @@ fn phase_checks(plan: &Plan, phase: usize) -> Result<(String, Vec<String>)> {
 fn failure_what(failed: &FailedCommand) -> String {
     if failed.timed_out {
         format!("timed out after {} s", failed.timeout_secs)
+    } else if failed.too_much_output {
+        verify::output_limit_text()
     } else {
         match failed.exit_code {
             Some(code) => format!("exit code {code}"),
@@ -416,6 +418,7 @@ ${limit} limit. Output: {}",
             failed.exit_code,
             failed.timed_out,
             failed.timeout_secs,
+            failed.too_much_output,
             &failed.output_tail,
         );
         launch = match ctx.state.phase(phase).and_then(|p| p.session_id.clone()) {

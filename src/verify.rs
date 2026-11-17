@@ -16,6 +16,10 @@ use crate::process::spawn_in_group;
 const TAIL_LINES: usize = 200;
 /// Most bytes of a check's output read back for the retry prompt.
 const TAIL_WINDOW: u64 = 64 * 1024;
+/// Most bytes one check may write to the log. A check that goes over it is
+/// stopped, so that a noisy command (`yes`, a test in a loop) cannot fill the
+/// disk during its timeout.
+const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const LEFTOVER_GRACE: Duration = Duration::from_millis(200);
 const POLL: Duration = Duration::from_millis(20);
@@ -41,6 +45,8 @@ pub struct FailedCommand {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub timeout_secs: u64,
+    /// The check was stopped because its output went over the limit.
+    pub too_much_output: bool,
     /// Last 200 lines of the command's output.
     pub output_tail: String,
 }
@@ -52,12 +58,47 @@ pub enum VerifyOutcome {
     Cancelled,
 }
 
+/// Message of a check stopped for writing too much, for the user and the agent.
+pub fn output_limit_text() -> String {
+    output_limit_text_for(OUTPUT_LIMIT)
+}
+
+fn output_limit_text_for(limit: u64) -> String {
+    if limit >= 1024 * 1024 {
+        format!("its output went over {} MiB", limit / (1024 * 1024))
+    } else {
+        format!("its output went over {limit} bytes")
+    }
+}
+
 /// Runs the commands in order with `sh -c` in `root`, stopping at the first
-/// failure, timeout or cancellation. Output goes to `log_path` (append).
+/// failure, timeout, excess of output or cancellation. Output goes to
+/// `log_path` (append).
 pub fn run_all(
     commands: &[String],
     root: &Path,
     timeout: Duration,
+    log_path: &Path,
+    attempt: u32,
+    cancel: &AtomicBool,
+    on_event: &mut dyn FnMut(VerifyEvent),
+) -> Result<VerifyOutcome> {
+    run_limited(
+        commands,
+        root,
+        (timeout, OUTPUT_LIMIT),
+        log_path,
+        attempt,
+        cancel,
+        on_event,
+    )
+}
+
+/// `run_all` with the (timeout, most output bytes per command) given.
+fn run_limited(
+    commands: &[String],
+    root: &Path,
+    (timeout, output_limit): (Duration, u64),
     log_path: &Path,
     attempt: u32,
     cancel: &AtomicBool,
@@ -97,6 +138,7 @@ pub fn run_all(
         let deadline = Instant::now() + timeout;
         let mut timed_out = false;
         let mut cancelled = false;
+        let mut too_much = false;
         let status = loop {
             if let Some(status) = child.try_wait()? {
                 break status;
@@ -105,18 +147,24 @@ pub fn run_all(
                 cancelled = true;
             } else if Instant::now() >= deadline {
                 timed_out = true;
+            } else if log.metadata()?.len().saturating_sub(start) > output_limit {
+                too_much = true;
             }
-            if cancelled || timed_out {
+            if cancelled || timed_out || too_much {
                 break child.terminate(KILL_GRACE)?;
             }
             thread::sleep(POLL);
         };
 
-        if !cancelled && !timed_out {
+        if !cancelled && !timed_out && !too_much {
             // Do not let background processes outlive the command.
             child.finish_leftovers(LEFTOVER_GRACE);
         }
         let exit_code = status.code();
+        if too_much {
+            // The command wrote on until it was stopped: keep what fits.
+            log.set_len(start + output_limit)?;
+        }
         end_the_line(&mut log, log_path, start)?;
         if cancelled {
             writeln!(log, "interrupted")?;
@@ -130,6 +178,8 @@ pub fn run_all(
         }
         if timed_out {
             writeln!(log, "timed out after {} s", timeout.as_secs())?;
+        } else if too_much {
+            writeln!(log, "stopped: {}", output_limit_text_for(output_limit))?;
         } else {
             match exit_code {
                 Some(code) => writeln!(log, "exit code: {code}")?,
@@ -137,7 +187,7 @@ pub fn run_all(
             }
         }
         log.flush()?;
-        let ok = status.success() && !timed_out;
+        let ok = status.success() && !timed_out && !too_much;
         on_event(VerifyEvent::Finished {
             command: command.clone(),
             ok,
@@ -152,6 +202,7 @@ pub fn run_all(
                 exit_code,
                 timed_out,
                 timeout_secs: timeout.as_secs(),
+                too_much_output: too_much,
                 output_tail,
             }));
         }
@@ -245,10 +296,11 @@ fn clean_output(text: &str) -> String {
 /// The last `TAIL_LINES` lines of `text` without phasewise's own trailer line.
 fn tail_lines(text: &str) -> Vec<&str> {
     let mut lines: Vec<&str> = text.lines().collect();
-    if lines
-        .last()
-        .is_some_and(|l| l.starts_with("exit code: ") || l.starts_with("timed out after "))
-    {
+    if lines.last().is_some_and(|l| {
+        l.starts_with("exit code: ")
+            || l.starts_with("timed out after ")
+            || l.starts_with("stopped: ")
+    }) {
         lines.pop();
     }
     let skip = lines.len().saturating_sub(TAIL_LINES);
@@ -290,6 +342,42 @@ mod tests {
         let log = dir.path().join("verify.log");
         std::fs::write(&log, content).expect("write");
         read_tail(&log, start as u64, content.len() as u64).expect("read_tail")
+    }
+
+    #[test]
+    fn a_check_that_writes_without_end_is_stopped_at_the_output_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("verify.log");
+        let cancel = AtomicBool::new(false);
+        let mut events = Vec::new();
+        let outcome = run_limited(
+            &cmds(&["yes 'a line of noise'", "echo never"]),
+            dir.path(),
+            (Duration::from_secs(60), 4096),
+            &log,
+            1,
+            &cancel,
+            &mut |e| events.push(e),
+        )
+        .expect("run");
+        let VerifyOutcome::Failed(failed) = outcome else {
+            panic!("expected a failure, got {outcome:?}");
+        };
+        assert!(failed.too_much_output && !failed.timed_out);
+        assert!(
+            !failed.output_tail.contains("stopped: "),
+            "{}",
+            failed.output_tail
+        );
+        let text = std::fs::read_to_string(&log).expect("log");
+        assert!(
+            text.contains("stopped: its output went over 4096 bytes"),
+            "{text}"
+        );
+        assert!(!text.contains("never"), "the next check must not run");
+        // The command's own output was cut to the limit.
+        assert!(text.len() < 4096 + 200, "{} bytes", text.len());
+        assert_eq!(events.len(), 2, "{events:?}");
     }
 
     #[test]
