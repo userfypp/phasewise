@@ -7,8 +7,6 @@ welcome (see [Labels](../CONTRIBUTING.md#labels)).
 
 ## Next up
 
-- [Accept the working tree of a failed phase after fixing it by hand](https://github.com/userfypp/phasewise/issues/30) (#30)
-
 - [Safe retry, rollback and recovery: commits lost by `retry`, submodules, `abort`, orphaned agents](https://github.com/userfypp/phasewise/issues/86) (#86)
 
 ## Planned
@@ -37,7 +35,6 @@ Features:
 - [Open a phase's diff in the user's editor or difftool](https://github.com/userfypp/phasewise/issues/37) (#37)
 - [Commands to run before a phase](https://github.com/userfypp/phasewise/issues/38) (#38)
 - [`--model` for the phases of the other agent in a mixed plan](https://github.com/userfypp/phasewise/issues/39) (#39)
-- [Settings: the default agent should apply to valid plans without an explicit agent](https://github.com/userfypp/phasewise/issues/40) (#40)
 - [A separate diff per subagent](https://github.com/userfypp/phasewise/issues/47) (#47)
 
 Open design questions:
@@ -51,7 +48,6 @@ Open design questions:
 Fixes and housekeeping:
 
 - [Take the run lock with `File::lock` (blocked on a newer MSRV)](https://github.com/userfypp/phasewise/issues/45) (#45)
-- [Fuzz or property tests for the plan parser](https://github.com/userfypp/phasewise/issues/52) (#52)
 - [Check the agent CLIs for changed flags on a schedule](https://github.com/userfypp/phasewise/issues/53) (#53)
 
 phasewise will never add telemetry, update checks or any other network access
