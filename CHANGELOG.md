@@ -5,6 +5,81 @@ All notable changes to this project are documented in this file. From version
 the merged pull requests. The project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/userfypp/phasewise/compare/v0.2.0...v0.3.0) (2026-11-17)
+
+
+### Added
+
+* **cli:** add phasewise accept for a failed phase fixed by hand ([#135](https://github.com/userfypp/phasewise/issues/135)) ([0772386](https://github.com/userfypp/phasewise/commit/077238667b5eb1c279968b24b3f215a65a212c5b))
+* **cli:** add phasewise report for a pull request description ([#113](https://github.com/userfypp/phasewise/issues/113)) ([b97815e](https://github.com/userfypp/phasewise/commit/b97815e0979b7961bb8f0c319a9e8c57b326a02f))
+* **plan:** let a phase set its own timeout ([#112](https://github.com/userfypp/phasewise/issues/112)) ([5aafaa6](https://github.com/userfypp/phasewise/commit/5aafaa641d4adf6d9fdf2addedc05d1ef8c51ff7))
+* **tui:** let the agent setting choose for a plan that names no agent ([#137](https://github.com/userfypp/phasewise/issues/137)) ([4286e2b](https://github.com/userfypp/phasewise/commit/4286e2b5d979695f7bc26511adf0017e70cf4ef0))
+* **tui:** open a phase's changes in git difftool with d ([#139](https://github.com/userfypp/phasewise/issues/139)) ([3dc3144](https://github.com/userfypp/phasewise/commit/3dc314451acd4a3ee36fb5322d8905210be10eea))
+* **tui:** run several phases from the run screen with u ([#151](https://github.com/userfypp/phasewise/issues/151)) ([64b4a6e](https://github.com/userfypp/phasewise/commit/64b4a6ef8d57b769556b13e615f8326eb62aaa2f))
+* **tui:** scroll the right panel by line and column, jump to its ends and search it ([#111](https://github.com/userfypp/phasewise/issues/111)) ([c9faf09](https://github.com/userfypp/phasewise/commit/c9faf09278d09a5f6f4c39aa6987511a8956a257))
+* **tui:** show the whole failure of a phase and its log paths on f ([#134](https://github.com/userfypp/phasewise/issues/134)) ([6abacc3](https://github.com/userfypp/phasewise/commit/6abacc38df34cdc8fa3eaf08a52110a9909934ca))
+
+
+### Fixed
+
+* **agent:** strip the repository path only at the start of a path ([#94](https://github.com/userfypp/phasewise/issues/94)) ([a685637](https://github.com/userfypp/phasewise/commit/a6856379612c6a73e7c56fe9db1d03be506f09d3))
+* **cli:** count only the phases a rollback reset ([#108](https://github.com/userfypp/phasewise/issues/108)) ([798baee](https://github.com/userfypp/phasewise/commit/798baeee2618bdf83ad4d2ea0b46a22d8615c8c7))
+* **cli:** make doctor fail on repository problems and warn about the plan's agent ([#96](https://github.com/userfypp/phasewise/issues/96)) ([c60471b](https://github.com/userfypp/phasewise/commit/c60471bf4dc92f9e72d7fc862ef0185511c7393a))
+* **cli:** make init refuse a plan path that is a directory or a dangling link ([#109](https://github.com/userfypp/phasewise/issues/109)) ([5d10389](https://github.com/userfypp/phasewise/commit/5d103891f05e43451aefdefb0684fa08660cae5c))
+* **cli:** warn when a report file would get in the way of the run ([#127](https://github.com/userfypp/phasewise/issues/127)) ([22aa58c](https://github.com/userfypp/phasewise/commit/22aa58cb1b38b10c348c73f34caf0189c4b83321))
+* **engine:** bound a line of agent output and ignore a negative cost ([#143](https://github.com/userfypp/phasewise/issues/143)) ([ad32d7a](https://github.com/userfypp/phasewise/commit/ad32d7a1838408a124e95658cde610d5c1cc3209))
+* **engine:** compare the cost limit in micro-dollars ([#101](https://github.com/userfypp/phasewise/issues/101)) ([08a7853](https://github.com/userfypp/phasewise/commit/08a7853ca177d565791a766115e376cfcb3a47d7))
+* **git:** do not call a repository git refuses "not a git repository" ([#157](https://github.com/userfypp/phasewise/issues/157)) ([85d87c6](https://github.com/userfypp/phasewise/commit/85d87c63e6ea08e01f581d51f3760aebbfcf1459))
+* **git:** keep the user's hooks out of checkpoints and out of branch switches ([#158](https://github.com/userfypp/phasewise/issues/158)) ([e8cfc37](https://github.com/userfypp/phasewise/commit/e8cfc37b4114a6b3be95399636980232148cd949))
+* **git:** take the path of the plan literally when committing it ([#120](https://github.com/userfypp/phasewise/issues/120)) ([37b6fea](https://github.com/userfypp/phasewise/commit/37b6fea8b89a087b94cd61b0e8709072a73f6193))
+* **ops:** count a checkpoint commit the state never recorded as phasewise's own ([#145](https://github.com/userfypp/phasewise/issues/145)) ([b68269d](https://github.com/userfypp/phasewise/commit/b68269d0e71acfd71fb29cbc68f975b34b66b3d2))
+* **ops:** do not advise phasewise init when a run's plan copy is missing ([#156](https://github.com/userfypp/phasewise/issues/156)) ([05c97c6](https://github.com/userfypp/phasewise/commit/05c97c69ddd5b44d8b8f0b8d37cc2032e2ddd2be))
+* **ops:** let abort finish when nothing can be staged ([#93](https://github.com/userfypp/phasewise/issues/93)) ([9cb94ab](https://github.com/userfypp/phasewise/commit/9cb94abac918b8cf5b801e257532b82b46d183c1))
+* **ops:** let retry and rollback drop the commits the agent made in a phase ([#121](https://github.com/userfypp/phasewise/issues/121)) ([18eedf5](https://github.com/userfypp/phasewise/commit/18eedf5a972ff2cc47727aa414d4895d2d5e0752))
+* **ops:** name a submodule or nested repository that blocks the run ([#136](https://github.com/userfypp/phasewise/issues/136)) ([7346c9e](https://github.com/userfypp/phasewise/commit/7346c9e444f7adc769595dce751c01330ca9ca2b))
+* **ops:** refuse 0 in the timeout environment variables ([#90](https://github.com/userfypp/phasewise/issues/90)) ([a61ceaf](https://github.com/userfypp/phasewise/commit/a61ceaf125ff420376934a55d52aa9b8955955b0))
+* **ops:** refuse retry and rollback when they would drop the user's commits ([#114](https://github.com/userfypp/phasewise/issues/114)) ([0932cac](https://github.com/userfypp/phasewise/commit/0932cac980a851ba0ec440fc262a254f917d2158))
+* **ops:** refuse to go on when the run branch lost a checkpoint ([#144](https://github.com/userfypp/phasewise/issues/144)) ([1b30523](https://github.com/userfypp/phasewise/commit/1b30523bb459e97c755bc69fc9211221330f4d82))
+* **ops:** say when a hook changed the plan after it was committed ([#154](https://github.com/userfypp/phasewise/issues/154)) ([f10069b](https://github.com/userfypp/phasewise/commit/f10069bbfaaeb7d23327a669208b48f65179c120))
+* **plan:** bound the timeouts to one year ([#95](https://github.com/userfypp/phasewise/issues/95)) ([1e76b8d](https://github.com/userfypp/phasewise/commit/1e76b8d463863a0bf70cdeae3c93e528d7fd862c))
+* **plan:** keep an answer without markers as a draft; init names the real path ([#148](https://github.com/userfypp/phasewise/issues/148)) ([9df51d6](https://github.com/userfypp/phasewise/commit/9df51d61073969291d8f874c5c24a725658f6687))
+* **plan:** read the front matter of a plan that starts with a byte order mark ([#88](https://github.com/userfypp/phasewise/issues/88)) ([27f1461](https://github.com/userfypp/phasewise/commit/27f14611659a6352e24aa2393d5eb3d2e6ceed93))
+* **plan:** refuse an output that cannot be written before the agent runs ([#147](https://github.com/userfypp/phasewise/issues/147)) ([3e8fe56](https://github.com/userfypp/phasewise/commit/3e8fe56e34858a9c5399440d2d60d0e769ee182f))
+* **plan:** reject a phase heading with an empty title ([#89](https://github.com/userfypp/phasewise/issues/89)) ([d9d0adb](https://github.com/userfypp/phasewise/commit/d9d0adb0344949ccd49bf889d79dae9c7dc75a42))
+* **plan:** reject control characters in a model and NUL in agent_args ([#153](https://github.com/userfypp/phasewise/issues/153)) ([b5919a8](https://github.com/userfypp/phasewise/commit/b5919a85833d4018b7bfe27509fe0f3d0b72bdf4))
+* **plan:** say that a plan file must be UTF-8 when it is not ([#92](https://github.com/userfypp/phasewise/issues/92)) ([4d47205](https://github.com/userfypp/phasewise/commit/4d472053dc9623f49bdb7b320b0eb5836ac4a878))
+* **state:** serialize concurrent settings updates with a lock file ([#104](https://github.com/userfypp/phasewise/issues/104)) ([d24dc8f](https://github.com/userfypp/phasewise/commit/d24dc8f89929105c5ef36c39f63840fdce69cae2))
+* **state:** stop an agent that a killed phasewise left running ([#126](https://github.com/userfypp/phasewise/issues/126)) ([b161a75](https://github.com/userfypp/phasewise/commit/b161a75526ef12e02b58acad2a77c7c48e414c03))
+* **state:** take over a lock file that has stayed empty ([#146](https://github.com/userfypp/phasewise/issues/146)) ([0d8b403](https://github.com/userfypp/phasewise/commit/0d8b4030f68c5257d7fc2bc86b0d53ed1d7d0764))
+* **state:** take over a lock that names PID 0 or an impossible PID ([#110](https://github.com/userfypp/phasewise/issues/110)) ([bdf44ad](https://github.com/userfypp/phasewise/commit/bdf44ad463d82876d2d39bc07468472173a4eb02))
+* **state:** write through a symbolic link instead of replacing it ([#130](https://github.com/userfypp/phasewise/issues/130)) ([cded998](https://github.com/userfypp/phasewise/commit/cded998e3633a62854e4cfbbbbf9e1b8e8e43bc1))
+* **tui:** follow changes made to the run by another process ([#118](https://github.com/userfypp/phasewise/issues/118)) ([bde80ed](https://github.com/userfypp/phasewise/commit/bde80ed930b71374587532e487643d3ee2d74526))
+* **tui:** ignore control keys on the run screen except Ctrl-C ([#131](https://github.com/userfypp/phasewise/issues/131)) ([27753ea](https://github.com/userfypp/phasewise/commit/27753ea75d3aeef10c13eb985bc78aed6e82bf31))
+* **tui:** keep the end of a typed text in view and sanitize the error popup ([#123](https://github.com/userfypp/phasewise/issues/123)) ([628a221](https://github.com/userfypp/phasewise/commit/628a2218bdb769c909443175cea7621e3b754db7))
+* **tui:** read only the end of a long agent log on each refresh ([#142](https://github.com/userfypp/phasewise/issues/142)) ([811e493](https://github.com/userfypp/phasewise/commit/811e493394cbd2da9b794a9b614ff130770e9a44))
+* **tui:** scroll a diff of more than 65,535 lines to its last line ([#103](https://github.com/userfypp/phasewise/issues/103)) ([f83805c](https://github.com/userfypp/phasewise/commit/f83805cd2c03acb09d2493bc996d391409c69b27))
+* **tui:** show tabs and control characters in the diff, log and verify views ([#97](https://github.com/userfypp/phasewise/issues/97)) ([260824e](https://github.com/userfypp/phasewise/commit/260824e9d5d705364f5dfe38d50a7adef0630f6f))
+* **tui:** type a large paste in linear time ([#155](https://github.com/userfypp/phasewise/issues/155)) ([605519e](https://github.com/userfypp/phasewise/commit/605519e0db16d050593e0eb7848f90720a134a02))
+* **tui:** type a pasted text into the input instead of submitting it ([#122](https://github.com/userfypp/phasewise/issues/122)) ([8452594](https://github.com/userfypp/phasewise/commit/8452594a22113b7b64a1df8b71f1bfe3a545dad5))
+* **verify:** keep the exit code line off the end of the command's output ([#91](https://github.com/userfypp/phasewise/issues/91)) ([57e84f7](https://github.com/userfypp/phasewise/commit/57e84f75e7fa71bee407da3ccd24436733e4d5bd))
+* **verify:** read only the end of a check's output for the retry prompt ([#102](https://github.com/userfypp/phasewise/issues/102)) ([10c47be](https://github.com/userfypp/phasewise/commit/10c47bef120bdc40c4a16624fb09b8b2aa4ade10))
+* **verify:** send the agent a check's output without escapes or progress bars ([#140](https://github.com/userfypp/phasewise/issues/140)) ([0e8f3e0](https://github.com/userfypp/phasewise/commit/0e8f3e0e5d14bc2ae4482eb99c7d6fc930e330d3))
+* **verify:** stop a check that writes more than 64 MiB ([#141](https://github.com/userfypp/phasewise/issues/141)) ([4e703c3](https://github.com/userfypp/phasewise/commit/4e703c376cb7a12e22561b9180a6c9dfc49fcf6f))
+
+
+### Documentation
+
+* add an example plan for a Go project ([#119](https://github.com/userfypp/phasewise/issues/119)) ([b37099d](https://github.com/userfypp/phasewise/commit/b37099dd591f4212638565aab52c2a7970c95727))
+* add an example plan for a Python project ([#116](https://github.com/userfypp/phasewise/issues/116)) ([97c3e33](https://github.com/userfypp/phasewise/commit/97c3e334f619617ba40f0baf95a4f6514fd2278a))
+* add rate-limits.json to the file layout and screenshot.rs to the module map ([#149](https://github.com/userfypp/phasewise/issues/149)) ([72b6a50](https://github.com/userfypp/phasewise/commit/72b6a5054d1eca5cc2b4df6b66e92acf506b300d))
+* describe the issue labels and update the template labels ([#28](https://github.com/userfypp/phasewise/issues/28)) ([a1b6a5c](https://github.com/userfypp/phasewise/commit/a1b6a5c2c8e7fb676eb79c19e5586321d766e2f1))
+* drop the finished items from the roadmap ([#132](https://github.com/userfypp/phasewise/issues/132)) ([58e619b](https://github.com/userfypp/phasewise/commit/58e619b2f125f723a5b42b827e32685324ce4876))
+* explain how to install the shell completions ([#115](https://github.com/userfypp/phasewise/issues/115)) ([ccf4f37](https://github.com/userfypp/phasewise/commit/ccf4f3720f608c35bace7ff1e2eb3f6c8e2b84c6))
+* list the roadmap as issues and add an optional CONTRIBUTORS file ([#56](https://github.com/userfypp/phasewise/issues/56)) ([7bb93fb](https://github.com/userfypp/phasewise/commit/7bb93fb952ef086cf134cbb4873a7132cfa2de77))
+* **roadmap:** add the issues found in the audit ([#87](https://github.com/userfypp/phasewise/issues/87)) ([0fd617e](https://github.com/userfypp/phasewise/commit/0fd617e6ec2e9e5027945745aa8c765e71a4438d))
+* **roadmap:** drop [#37](https://github.com/userfypp/phasewise/issues/37), which is done, and list [#150](https://github.com/userfypp/phasewise/issues/150) ([#152](https://github.com/userfypp/phasewise/issues/152)) ([eb3fb69](https://github.com/userfypp/phasewise/commit/eb3fb699f1d4bc7e3d39c30c82d8ca1963fff8e0))
+* **roadmap:** drop the issues that are closed ([#138](https://github.com/userfypp/phasewise/issues/138)) ([efb8119](https://github.com/userfypp/phasewise/commit/efb81198cd41e83d18895022a1533cebcb60490c))
+
 ## [0.2.0](https://github.com/userfypp/phasewise/compare/v0.1.0...v0.2.0) (2026-11-15)
 
 
