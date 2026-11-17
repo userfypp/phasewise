@@ -388,7 +388,10 @@ impl AgentParser for ClaudeParser {
                 out.push(AgentEvent::Finished {
                     ok: !is_error && subtype == Some("success"),
                     summary,
-                    cost_usd: value.get("total_cost_usd").and_then(Value::as_f64),
+                    cost_usd: value
+                        .get("total_cost_usd")
+                        .and_then(Value::as_f64)
+                        .filter(|c| c.is_finite() && *c >= 0.0),
                 });
             }
             _ => {}
@@ -464,6 +467,23 @@ mod tests {
             r#"{"type":"rate_limit_event","info":{"remaining":5}}"#,
         ] {
             assert_eq!(parser.feed(line), []);
+        }
+    }
+
+    #[test]
+    fn a_negative_or_unreadable_cost_is_not_counted() {
+        for cost in ["-5", "null", "\"3\""] {
+            let mut parser = ClaudeParser::new(Path::new("/work/repo"));
+            let line = format!(
+                r#"{{"type":"result","subtype":"success","is_error":false,"session_id":"s","result":"done","total_cost_usd":{cost}}}"#
+            );
+            let events = parser.feed(&line);
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::Finished { cost_usd: None, .. })),
+                "{cost}: {events:?}"
+            );
         }
     }
 

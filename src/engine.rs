@@ -2,7 +2,7 @@
 //! progress through `EngineEvent`s; never prints.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -575,7 +575,7 @@ pub fn run_agent_session(
     }
     let (tx, rx) = mpsc::channel();
     if let Some(stdout) = child.take_stdout() {
-        thread::spawn(move || read_stdout(stdout, stdout_file, parser, tx));
+        thread::spawn(move || read_stdout(stdout, stdout_file, parser, tx, LINE_LIMIT));
     } else {
         let _ = tx.send(Reader::Eof);
     }
@@ -589,26 +589,70 @@ pub fn run_agent_session(
     run
 }
 
-/// Reader thread: raw lines to the log, parsed events to the engine loop.
+/// Longest line of an agent's output that is kept and parsed. A real event is
+/// far shorter; a longer one (a runaway stream with no line break) would
+/// otherwise grow in memory until the timeout.
+const LINE_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// Reads one line into `buf` (cleared first), at most `limit` bytes of it.
+/// `None` at the end of the input; else whether the line was longer than the
+/// limit, in which case `buf` holds its start and the rest is skipped.
+fn read_capped_line(
+    reader: &mut impl BufRead,
+    buf: &mut Vec<u8>,
+    limit: u64,
+) -> std::io::Result<Option<bool>> {
+    buf.clear();
+    let read = reader.by_ref().take(limit).read_until(b'\n', buf)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if buf.ends_with(b"\n") || (read as u64) < limit {
+        return Ok(Some(false));
+    }
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            break;
+        }
+        match chunk.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                reader.consume(i + 1);
+                break;
+            }
+            None => {
+                let all = chunk.len();
+                reader.consume(all);
+            }
+        }
+    }
+    Ok(Some(true))
+}
+
+/// Reader thread: raw lines to the log, parsed events to the engine loop. A
+/// line over `line_limit` bytes is logged cut and not parsed.
 fn read_stdout(
     stdout: impl std::io::Read,
     mut log: File,
     mut parser: Box<dyn AgentParser>,
     tx: Sender<Reader>,
+    line_limit: u64,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut buf = Vec::new();
     loop {
-        buf.clear();
-        match reader.read_until(b'\n', &mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
-        }
+        let too_long = match read_capped_line(&mut reader, &mut buf, line_limit) {
+            Ok(Some(too_long)) => too_long,
+            Ok(None) | Err(_) => break,
+        };
         let _ = log.write_all(&buf);
         if !buf.ends_with(b"\n") {
             let _ = log.write_all(b"\n");
         }
         let _ = log.flush();
+        if too_long {
+            continue;
+        }
         let line = String::from_utf8_lossy(&buf);
         for event in parser.feed(line.trim_end_matches(['\r', '\n'])) {
             if tx.send(Reader::Event(event)).is_err() {
@@ -869,6 +913,41 @@ pub fn cost_limit_reached(spent: f64, limit: f64) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn lines_of(input: &[u8], limit: u64) -> Vec<(String, bool)> {
+        let mut reader = BufReader::with_capacity(8, input);
+        let mut buf = Vec::new();
+        let mut out = Vec::new();
+        while let Some(too_long) = read_capped_line(&mut reader, &mut buf, limit).expect("read") {
+            out.push((String::from_utf8_lossy(&buf).into_owned(), too_long));
+        }
+        out
+    }
+
+    #[test]
+    fn a_line_over_the_limit_is_cut_and_the_next_line_is_intact() {
+        let got = lines_of(b"ok1\n0123456789abcdefghij\nok2\nlast", 10);
+        assert_eq!(
+            got,
+            vec![
+                ("ok1\n".to_string(), false),
+                ("0123456789".to_string(), true),
+                ("ok2\n".to_string(), false),
+                ("last".to_string(), false),
+            ]
+        );
+        // A long line at the very end of the input, and a line that fits exactly.
+        assert_eq!(
+            lines_of(b"abcdefghijklmnop", 10),
+            vec![("abcdefghij".to_string(), true)]
+        );
+        assert_eq!(
+            lines_of(b"123456789\n", 10),
+            vec![("123456789\n".to_string(), false)]
+        );
+    }
+
     #[test]
     fn the_cost_limit_is_compared_in_micro_dollars() {
         let same = |a: &str| Some((a.to_string(), a.to_string()));

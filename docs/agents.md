@@ -27,7 +27,8 @@ fake agents. Re-check this page whenever you upgrade either CLI
   phasewise's own events. stderr goes to the matching `.stderr.log`.
 - **The parsers never fail.** Lines that are not JSON objects, unknown event
   types and unknown fields are ignored, so a newer CLI that adds events keeps
-  working.
+  working. A line over 16 MiB is saved to the log cut and not parsed, and a
+  negative or non-numeric `total_cost_usd` counts as no cost.
 - **The environment is inherited unchanged.** The agent sees your `PATH`, your
   credentials and your configuration, exactly as when you run it yourself.
 - **Which program runs:** `claude` and `codex` from `PATH`, or the paths in
