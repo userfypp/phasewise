@@ -3,8 +3,9 @@ mod common;
 use common::TestRepo;
 use predicates::prelude::*;
 
-const EXAMPLES: [&str; 3] = [
+const EXAMPLES: [&str; 4] = [
     "examples/plans/go-add-subcommand.md",
+    "examples/plans/python-add-cli-option.md",
     "examples/plans/rust-add-subcommand.md",
     "examples/plans/typescript-migration.md",
 ];
