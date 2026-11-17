@@ -470,8 +470,10 @@ impl LockGuard {
                     let pid: Option<u32> = trimmed.parse().ok();
                     let stale = match pid {
                         Some(pid) => !process::is_alive(pid),
-                        // Empty: another process is creating it right now.
-                        None => !trimmed.is_empty(),
+                        // Empty: another process is creating it right now, unless
+                        // it has been empty for longer than that takes (a crash
+                        // between creating and writing it).
+                        None => !trimmed.is_empty() || empty_lock_is_old(&path),
                     };
                     if !stale || attempt == 1 {
                         return Err(lock_in_use(pid, &path));
@@ -487,6 +489,18 @@ impl LockGuard {
         }
         Err(lock_in_use(None, &path))
     }
+}
+
+/// How long a lock may stay empty before it is taken for the leftover of a
+/// process that died between creating and writing it.
+const EMPTY_LOCK_GRACE: Duration = Duration::from_secs(10);
+
+fn empty_lock_is_old(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age >= EMPTY_LOCK_GRACE)
 }
 
 /// Removes a lock that looked stale (it held `seen`). The file is moved aside
@@ -1045,6 +1059,18 @@ mod tests {
                 .unwrap_or_else(|e| panic!("a lock holding {pid} must be taken over: {e}"));
             assert_eq!(lock_holder(&paths), Some(std::process::id()), "{pid}");
         }
+    }
+
+    #[test]
+    fn an_old_empty_lock_is_stale() {
+        let (_dir, paths) = temp_paths();
+        fs::create_dir_all(paths.dir()).unwrap();
+        let file = fs::File::create(paths.lock_file()).unwrap();
+        file.set_modified(std::time::SystemTime::now() - Duration::from_secs(60))
+            .unwrap();
+        drop(file);
+        let _guard = LockGuard::acquire(&paths).expect("an empty lock left for a minute");
+        assert_eq!(lock_holder(&paths), Some(std::process::id()));
     }
 
     #[test]
