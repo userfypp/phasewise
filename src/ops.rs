@@ -702,6 +702,7 @@ fn reset_phase(run: &mut Run, number: usize) {
         phase.status = PhaseStatus::Pending;
         phase.session_id = None;
         phase.checkpoint_sha = None;
+        phase.start_sha = None;
         phase.summary = None;
         phase.failure = None;
         phase.model = None;
@@ -713,16 +714,27 @@ fn reset_phase(run: &mut Run, number: usize) {
 }
 
 /// Refuses a reset to `target` that would drop commits the user made on the
-/// run branch: those that are not checkpoints of this run and are on no other
-/// branch or tag. Nothing is changed.
+/// run branch: those that are not the run's own (the checkpoints and the
+/// commits the agent made inside a phase) and are on no other branch or tag.
+/// Nothing is changed.
 fn check_no_commits_lost(run: &Run, target: &str) -> Result<()> {
-    let checkpoints: Vec<String> = run
-        .state
-        .phases
-        .iter()
-        .filter_map(|p| p.checkpoint_sha.clone())
-        .collect();
-    let lost = run.git.commits_that_would_be_lost(target, &checkpoints)?;
+    let mut own: Vec<String> = Vec::new();
+    for phase in &run.state.phases {
+        let Some(checkpoint) = &phase.checkpoint_sha else {
+            continue;
+        };
+        own.push(checkpoint.clone());
+        if let Some(start) = &phase.start_sha {
+            // A range that cannot be read just leaves those commits to the
+            // check below, which refuses and says what to do.
+            own.extend(
+                run.git
+                    .commits_between(start, checkpoint)
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    let lost = run.git.commits_that_would_be_lost(target, &own)?;
     if lost.is_empty() {
         return Ok(());
     }

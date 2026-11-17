@@ -278,7 +278,10 @@ pub fn run_phase(
         .collect();
     let base_prompt = prompt::phase_prompt(ctx.plan, phase, &completed, &verify_commands, note);
 
+    // Before the agent can commit anything: where this phase starts.
+    let start_sha = ctx.git.head_sha().ok();
     let state = ctx.phase_state(phase)?;
+    state.start_sha = start_sha;
     state.started_at = Some(Timestamp::now());
     state.finished_at = None;
     state.failure = None;

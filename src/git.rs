@@ -319,6 +319,26 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
             .to_string())
     }
 
+    /// The commits after `from` up to and including `to`, newest first; none
+    /// when `from` is not an ancestor of `to`.
+    pub fn commits_between(&self, from: &str, to: &str) -> Result<Vec<String>> {
+        let args = ["merge-base", "--is-ancestor", from, to];
+        let output = self.output(&args, None)?;
+        match output.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(Vec::new()),
+            _ => return Err(self.failure(&args, &output)),
+        }
+        let range = format!("{from}..{to}");
+        let listed = self.run(&["rev-list", &range])?;
+        Ok(listed
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
     /// Commits between `target` and `HEAD` that a reset to `target` would
     /// leave on no branch or tag, newest first. `keep` lists the commits that
     /// are phasewise's own (checkpoints): they are never reported. A commit
@@ -772,6 +792,28 @@ mod tests {
         assert_eq!(tracked.trim(), "plan.md");
         let status = git.run(&["status", "--porcelain"]).expect("status");
         assert_eq!(status.trim(), "A  other.txt");
+    }
+
+    #[test]
+    fn commits_between_lists_what_is_after_from_up_to_to() {
+        let (dir, git) = repo();
+        let commit = |name: &str| {
+            fs::write(dir.path().join(name), name).expect("write");
+            git.run(&["add", "--", name]).expect("add");
+            git.run(&["commit", "-q", "-m", name]).expect("commit");
+            git.head_sha().expect("sha")
+        };
+        let a = commit("a");
+        let b = commit("b");
+        let c = commit("c");
+        assert_eq!(git.commits_between(&a, &c).expect("range"), [c.clone(), b]);
+        assert!(git.commits_between(&c, &c).expect("empty").is_empty());
+        // Not an ancestor (a commit on a side branch): nothing is claimed as
+        // part of the range, though `rev-list d..c` would list b and c.
+        git.run(&["switch", "-q", "-c", "side", &a])
+            .expect("branch");
+        let d = commit("d");
+        assert!(git.commits_between(&d, &c).expect("diverged").is_empty());
     }
 
     #[test]

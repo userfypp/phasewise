@@ -296,6 +296,54 @@ fn retry_refuses_to_drop_a_commit_made_by_hand_on_the_run_branch() {
 }
 
 #[test]
+fn retry_and_rollback_drop_the_commits_the_agent_made_in_a_phase() {
+    let env = Env::new();
+    env.ok(&["run"], &[("FAKE_MODE", "commit")]);
+    env.ok(&["next"], &[("FAKE_MODE", "commit")]);
+    let log = |env: &Env| env.repo.git(&["log", "--format=%s"]);
+    assert!(log(&env).contains("agent commit for phase 2"));
+
+    // The agent's own commit is part of what retry discards.
+    env.ok(&["retry"], &[]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+    assert!(
+        !log(&env).contains("agent commit for phase 2"),
+        "{}",
+        log(&env)
+    );
+    assert!(log(&env).contains("agent commit for phase 1"));
+
+    env.ok(&["next"], &[("FAKE_MODE", "commit")]);
+    assert_eq!(env.statuses(), ["done", "done", "awaiting_review"]);
+    env.ok(&["rollback", "1", "--yes"], &[]);
+    assert_eq!(env.statuses(), ["done", "pending", "pending"]);
+    assert!(
+        !log(&env).contains("agent commit for phase 3"),
+        "{}",
+        log(&env)
+    );
+    assert_eq!(env.repo.git_trim(&["rev-parse", "HEAD"]), env.checkpoint(1));
+    env.check_invariants();
+}
+
+#[test]
+fn a_commit_made_by_hand_between_phases_is_still_protected() {
+    let env = Env::new();
+    env.ok(&["run"], &[("FAKE_MODE", "commit")]);
+    env.repo.commit_file("mine.txt", "mine\n", "my own work");
+    env.ok(&["next"], &[("FAKE_MODE", "commit")]);
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+
+    let out = env.exec(&["retry"], &[]);
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("my own work"), "{}", out.stderr);
+    // Only the hand-made commit is named: the agent's are the run's own.
+    assert!(!out.stderr.contains("agent commit"), "{}", out.stderr);
+    assert!(env.exists("mine.txt"));
+    assert_eq!(env.statuses(), ["done", "awaiting_review", "pending"]);
+}
+
+#[test]
 fn rollback_refuses_to_drop_a_commit_made_by_hand_on_the_run_branch() {
     let (env, head, log) = env_with_a_hand_made_commit();
     let out = env.exec(&["rollback", "1", "--yes"], &[]);
