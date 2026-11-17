@@ -250,8 +250,21 @@ impl RunPaths {
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `bytes` to `path` through a temp file in the same directory,
-/// `sync_all` and `rename`. Creates the parent directory if needed.
+/// `sync_all` and `rename`. Creates the parent directory if needed. When
+/// `path` is a symbolic link (a settings file kept in a dotfiles repository),
+/// the file it points to is written: renaming over the link would replace it
+/// with a regular file and leave the original stale.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let target;
+    let is_link = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    // A link that points nowhere cannot be resolved: it is replaced as before.
+    let path = match is_link.then(|| fs::canonicalize(path)) {
+        Some(Ok(resolved)) => {
+            target = resolved;
+            target.as_path()
+        }
+        _ => path,
+    };
     let parent = path.parent().ok_or_else(|| {
         anyhow!(
             "Cannot write {}: it has no parent directory",
@@ -708,6 +721,56 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["file.txt".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_goes_through_a_symlink_and_keeps_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("dotfiles");
+        fs::create_dir(&store).unwrap();
+        let real = store.join("settings.toml");
+        fs::write(&real, "old").unwrap();
+        let link = dir.path().join("settings.toml");
+        symlink(&real, &link).unwrap();
+
+        write_atomic(&link, b"new").unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        // No temp file in either directory.
+        for d in [dir.path(), store.as_path()] {
+            let leftovers = fs::read_dir(d)
+                .unwrap()
+                .filter(|e| {
+                    let name = e.as_ref().unwrap().file_name();
+                    name.to_string_lossy().ends_with(".tmp")
+                })
+                .count();
+            assert_eq!(leftovers, 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_replaces_a_link_that_points_nowhere() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("settings.toml");
+        symlink(dir.path().join("missing.toml"), &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(
+            !fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&link).unwrap(), "new");
     }
 
     #[test]
