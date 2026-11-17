@@ -267,7 +267,8 @@ These hold everywhere. A change that breaks one is a design change.
   changed parent process as a closed terminal, because then no signal may
   arrive.
 - **Agent parsers never fail.** Invalid JSON, unknown events and unknown fields
-  are ignored.
+  are ignored, and so is a known field with a value of the wrong type
+  (`tests/parser_mutations.rs` mutates every fixture line to check it).
 - **No network.** phasewise itself makes no connections; only the agents do.
 - **Tests never run a real agent**, never use the network and never read the
   global git configuration.
