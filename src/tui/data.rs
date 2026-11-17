@@ -16,6 +16,7 @@ use crate::git::Git;
 use crate::ops::Run;
 use crate::plan::{self, AgentKind};
 use crate::state::{PhaseStatus, RateLimits, RunStatus};
+use crate::style::Role;
 use jiff::Timestamp;
 
 /// One line of the Log tab.
@@ -242,16 +243,26 @@ pub fn load_log(run: &Run, phase: usize) -> Vec<LogLine> {
     let mut lines = Vec::new();
     let mut seen_sessions: Vec<String> = Vec::new();
     for attempt in 1..=attempts {
-        let Ok(raw) = std::fs::read(run.paths.agent_stdout_log(phase, attempt)) else {
+        let Some((raw, cut)) = read_window(&run.paths.agent_stdout_log(phase, attempt), LOG_WINDOW)
+        else {
             continue;
         };
-        let raw = String::from_utf8_lossy(&raw);
         let mut parser = agent.parser(run.git.root());
         let heading = lines.len();
         lines.push(LogLine::Attempt {
             number: attempt,
             resumed: false,
         });
+        if cut {
+            lines.push(LogLine::Event(EventLine {
+                time: None,
+                icon: "·",
+                label: String::new(),
+                detail: "(earlier events of this attempt are not shown; see the log file)"
+                    .to_string(),
+                role: Role::Dim,
+            }));
+        }
         let mut sessions = Vec::new();
         for line in raw.lines() {
             for event in parser.feed(line) {
@@ -273,6 +284,10 @@ pub fn load_log(run: &Run, phase: usize) -> Vec<LogLine> {
     lines
 }
 
+/// Most bytes of the end of an agent's output the screen parses per attempt: the
+/// screen reloads it several times a second while a phase runs.
+const LOG_WINDOW: u64 = 4 * 1024 * 1024;
+
 /// Most bytes of the end of a verification log the screen loads.
 const VERIFY_WINDOW: u64 = 1024 * 1024;
 
@@ -284,26 +299,36 @@ pub fn load_verify(run: &Run, phase: usize) -> String {
 }
 
 fn read_log_end(path: &Path, window: u64) -> Option<String> {
+    let (text, cut) = read_window(path, window)?;
+    if text.is_empty() && !cut {
+        return None;
+    }
+    if !cut {
+        return Some(text);
+    }
+    Some(format!(
+        "(only the end of the log is shown; the whole file is {})\n{text}",
+        path.display()
+    ))
+}
+
+/// The file's text, or its last `window` bytes from the first whole line on,
+/// and whether the start was left out. `None` when it cannot be read.
+fn read_window(path: &Path, window: u64) -> Option<(String, bool)> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    if len == 0 {
-        return None;
-    }
     let from = len.saturating_sub(window);
     file.seek(SeekFrom::Start(from)).ok()?;
     let mut bytes = Vec::new();
     file.take(window).read_to_end(&mut bytes).ok()?;
     let text = String::from_utf8_lossy(&bytes);
     if from == 0 {
-        return Some(text.into_owned());
+        return Some((text.into_owned(), false));
     }
-    // The window starts in the middle of a line: show it from the next one.
+    // The window starts in the middle of a line: use it from the next one.
     let rest = text.find('\n').map_or("", |i| &text[i + 1..]);
-    Some(format!(
-        "(only the end of the log is shown; the whole file is {})\n{rest}",
-        path.display()
-    ))
+    Some((rest.to_string(), true))
 }
 
 /// One phase of the plan shown on the home screen.

@@ -162,6 +162,38 @@ fn failed_phase_shows_the_worktree_diff_and_untracked_files() {
     );
 }
 
+#[test]
+fn a_huge_agent_log_is_read_from_its_end() {
+    let env = Env::new();
+    assert_eq!(env.exec(&["run"], &[]), 0);
+    let run = env.load();
+    // Pad the log of attempt 1 with far more than the screen reads, then end it
+    // with an event that must still be shown.
+    let path = run.paths.agent_stdout_log(1, 1);
+    let original = std::fs::read_to_string(&path).expect("log");
+    let filler = "{\"type\":\"unknown\",\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n";
+    let mut padded = filler.repeat(5 * 1024 * 1024 / filler.len() + 1);
+    padded.push_str(&original);
+    std::fs::write(&path, padded).expect("write");
+
+    let log = load_log(&run, 1);
+    let details: Vec<String> = log
+        .iter()
+        .filter_map(|l| match l {
+            LogLine::Event(e) => Some(e.detail.clone()),
+            LogLine::Attempt { .. } => None,
+        })
+        .collect();
+    assert!(
+        details.iter().any(|d| d.starts_with("(earlier events")),
+        "{details:?}"
+    );
+    assert!(
+        details.iter().any(|d| d == "Working on phase 1."),
+        "{details:?}"
+    );
+}
+
 const HOME_PLAN: &str = "+++\nagent = \"codex\"\nmodel = \"gpt-x\"\neffort = \"low\"\n+++\n\n# Home plan\n\n\
 ## Phase 1: First\n\nDo one.\n\n```verify\ntrue\ntest -f a\n```\n\n\
 ## Phase 2: Second\n\nDo two.\n\n```phasewise\nmodel = \"special\"\neffort = \"high\"\n```\n";

@@ -61,7 +61,7 @@ check runs as a child process in its own process group.
 | `tui/mod.rs` | The TUI's event loop: terminal setup and restore, the two screens, worker threads, refreshes. |
 | `tui/home.rs`, `tui/app.rs` | Pure state machines for the home and run screens: a key in, a command out, no I/O. |
 | `tui/shared.rs` | State and helpers both screens use (popups, footer items, spinner timing, the settings popup's state machine). |
-| `tui/data.rs` | Read-only loaders: home data, run, diff, log and checks. |
+| `tui/data.rs` | Read-only loaders: home data, run, diff, log and checks. The agent log and the verify log are read from their end (4 MiB per attempt, 1 MiB), because the run screen reloads them several times a second. |
 | `tui/home_view.rs`, `tui/view.rs`, `tui/widgets.rs` | Rendering with ratatui: the home screen, the run screen, and the pieces they share. Covered by `insta` snapshots. |
 
 Library code returns `anyhow::Result`, or a `thiserror` type where the caller
