@@ -1292,6 +1292,8 @@ pub fn create_plan(
         let run = run_agent_session(
             AgentSession {
                 command,
+                // Planning only reads, so a leftover agent hurts nothing.
+                group_file: None,
                 prompt: next_prompt.clone(),
                 stdout_log: &stdout_log,
                 stderr_log: &stderr_log,

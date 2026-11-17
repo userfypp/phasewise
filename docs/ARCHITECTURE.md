@@ -190,6 +190,7 @@ nothing else).
 │   ├── state.json                     the run's state
 │   ├── plan.md                        the plan as it was when the run started
 │   ├── lock                           PID of the process changing the run
+│   ├── agent.group                    process group of the running agent (see below)
 │   ├── phase-NN.attempt-K.jsonl       agent output, one event per line
 │   ├── phase-NN.attempt-K.stderr.log  agent stderr
 │   └── phase-NN.verify.log            check output, every attempt
@@ -242,6 +243,9 @@ These hold everywhere. A change that breaks one is a design change.
   `index.lock` while a checkpoint is committed. A command that still meets a
   held lock is retried for about 3.5 seconds before the error, which names the
   lock file and what to do. phasewise never deletes a lock file.
+- **A path is a path.** `commit_file` (the plan's commit) passes
+  `--literal-pathspecs`, so a plan named `a*.md` or `plan[v2].md` is not a
+  pattern that also stages and commits its neighbours.
 - **`retry` and `rollback` never drop a commit that is only on the run
   branch and is not a checkpoint.** Before `git reset --hard`,
   `Git::commits_that_would_be_lost` lists the commits between the target and
@@ -250,13 +254,26 @@ These hold everywhere. A change that breaks one is a design change.
 - **`git clean` never touches `.phasewise/`**: it runs with
   `-e /.phasewise/`, and the directory is also excluded.
 - **State is written atomically:** a temporary file in the same directory,
-  `sync_all`, then `rename`.
+  `sync_all`, then `rename`. A path that is a symbolic link (a settings file
+  kept in a dotfiles repository) is written through: the file it points to
+  is replaced and the link stays.
 - **One process changes a run at a time.** `runs/<id>/lock` holds the PID of
   the process running a mutating operation, created with `create_new`. A lock
   whose process is gone is stale and replaced. With a live lock, read-only
   commands show the state as it is and mutating commands refuse.
 - **Interrupted work is recovered on load.** Without a live lock, a phase left
-  in `running` or `verifying` becomes `failed` with `interrupted`.
+  in `running` or `verifying` becomes `failed` with `interrupted`. While an
+  agent runs, `runs/<id>/agent.group` holds its process group and the start
+  time of its leader (`ps -o lstart=`); the engine removes it when the agent is
+  gone. If phasewise was killed without a chance to clean up, recovery stops
+  that group (`TERM`, 2 seconds, `KILL`) before anything else touches the tree.
+  A PID can come back for an unrelated process, so the group is signalled only
+  when its leader started at the recorded time, or the leader is gone while
+  other members still hold the id; when that cannot be told (`ps` missing, or
+  its start time for the leader differs, which a changed boot clock can cause),
+  nothing is signalled and the phase's failure names the group and the `kill`
+  to run by hand. The start time is read with `TZ=UTC`. The record is written a moment after the spawn, so a kill in that moment
+  leaves the agent unrecorded.
 - **Every child runs in its own process group** and is stopped as a group:
   `TERM`, a grace period (5 seconds for an agent, 2 for a check), then
   `KILL`. A child dropped without being stopped
@@ -267,7 +284,8 @@ These hold everywhere. A change that breaks one is a design change.
   changed parent process as a closed terminal, because then no signal may
   arrive.
 - **Agent parsers never fail.** Invalid JSON, unknown events and unknown fields
-  are ignored.
+  are ignored, and so is a known field with a value of the wrong type
+  (`tests/parser_mutations.rs` mutates every fixture line to check it).
 - **No network.** phasewise itself makes no connections; only the agents do.
 - **Tests never run a real agent**, never use the network and never read the
   global git configuration.
@@ -291,7 +309,10 @@ TUI: the run screen when the current run is active, the home screen otherwise.
   through a channel. Every turn, the loop drains the channels, joins finished
   workers, reloads what changed (run data at most every 250 ms; the home data
   every 2 seconds, on a thread) and redraws only when something changed, or
-  every 120 ms while a spinner shows. A periodic home reload is dropped if,
+  every 120 ms while a spinner shows. While no worker of its own runs, the
+  run screen also compares a `RunStamp` (the current run and the time and
+  size of its `state.json`) once a second and reloads when another process
+  changed the run; if the run is gone, the screen closes. A periodic home reload is dropped if,
   when it arrives, a popup is open, a commit is running or an explicit reload
   happened since it started.
 - **Pasting** uses the terminal's bracketed paste mode (on while the TUI runs,

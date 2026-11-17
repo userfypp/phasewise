@@ -797,6 +797,41 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn no_mode_panics_at_any_size() {
+        let problems = vec![PlanProblem {
+            line: 3,
+            message: "a problem that is long enough to need wrapping in a narrow terminal".into(),
+        }];
+        let modes = [
+            Mode::Normal,
+            Mode::Help,
+            Mode::ConfirmQuit(0),
+            Mode::ConfirmStopPlan(1),
+            Mode::ModelPopup(1),
+            Mode::ModelInput("a-custom-model".into()),
+            Mode::EffortPopup(2),
+            Mode::GoalInput("a CLI to convert CSV files to JSON".into()),
+            Mode::ConfirmReplace("goal".into(), 0),
+            Mode::ConfirmCommitStart(0),
+            Mode::Error(vec!["Something failed.".into(), "Try again later.".into()]),
+        ];
+        let plans = [
+            PlanState::Missing,
+            valid_plan(),
+            PlanState::Invalid(problems),
+        ];
+        for plan in plans {
+            for mode in &modes {
+                let mut screen = home(plan.clone());
+                screen.mode = mode.clone();
+                for (width, height) in crate::tui::view::tests::sizes() {
+                    render_sized(&screen, width, height);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn valid_plan_uncommitted() {
         let mut home = home(valid_plan());
         home.data.plan_uncommitted = true;
@@ -975,6 +1010,29 @@ pub(super) mod tests {
             "The working tree has uncommitted changes:\n  phasewise.md\nCommit or stash them, then run phasewise again."
         ));
         insta::assert_snapshot!(render(&home).backend());
+    }
+
+    #[test]
+    fn an_error_from_a_tool_shows_no_escape_sequences() {
+        let mut home = home(valid_plan());
+        home.commit_finished(&Err(
+            "hook failed\n\u{1b}[31mred\u{1b}[0m\tafter the tab".into()
+        ));
+        let text = format!("{}", render(&home).backend());
+        assert!(text.contains("\u{fffd}[31mred"), "{text}");
+        assert!(text.contains("after the tab"), "{text}");
+        assert!(!text.contains('\u{1b}'), "{text}");
+    }
+
+    #[test]
+    fn a_long_goal_shows_the_end_where_the_cursor_is() {
+        let mut home = home(valid_plan());
+        let goal = format!("{}THE END", "word ".repeat(300));
+        home.mode = Mode::GoalInput(goal);
+        // The smallest screen the TUI draws: the popup cannot show every line.
+        let text = format!("{}", render_sized(&home, 80, 24).backend());
+        assert!(text.contains("THE END█"), "{text}");
+        assert!(text.contains("↑ more"), "{text}");
     }
 
     #[test]

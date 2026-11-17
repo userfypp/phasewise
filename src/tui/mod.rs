@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Once, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, anyhow};
 use ratatui::DefaultTerminal;
@@ -36,7 +36,7 @@ use crate::ops::{
 use crate::plan::AgentKind;
 use crate::process;
 use crate::settings::{self, Settings};
-use crate::state::{PhaseStatus, RunState, RunStatus};
+use crate::state::{PhaseStatus, PhasewiseDir, RunPaths, RunState, RunStatus};
 use crate::style::Styler;
 use app::{App, Command, Tab};
 use data::HomeData;
@@ -48,6 +48,8 @@ const NEEDS_TERMINAL: &str = "phasewise review needs an interactive terminal. Ru
 const NEEDS_TERMINAL_HOME: &str = "phasewise needs an interactive terminal for its home screen. Run it from a terminal, or use `phasewise --help` to see the commands.";
 const POLL: Duration = Duration::from_millis(100);
 const REFRESH_EVERY: Duration = Duration::from_millis(250);
+/// How often the run screen looks for changes made by another process.
+const OUTSIDE_CHECK_EVERY: Duration = Duration::from_secs(1);
 /// How often the home screen reloads its data by itself.
 const HOME_RELOAD_EVERY: Duration = Duration::from_secs(2);
 /// How long the TUI loop may go without a turn, while a signal is pending or
@@ -153,6 +155,27 @@ struct Worker {
     events: Receiver<EngineEvent>,
 }
 
+/// What the run screen can tell about the run on disk without loading it: the
+/// id of the current run and the time and size of its `state.json`. Another
+/// stamp than the one taken at the last load means another process (`next`,
+/// `abort`, `merge`, a new run) changed the run since.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunStamp {
+    run_id: Option<String>,
+    state: Option<(SystemTime, u64)>,
+}
+
+impl RunStamp {
+    fn read(repo_root: &Path) -> RunStamp {
+        let run_id = PhasewiseDir::new(repo_root).read_current().ok().flatten();
+        let state = run_id.as_ref().and_then(|id| {
+            let meta = std::fs::metadata(RunPaths::new(repo_root, id).state_file()).ok()?;
+            Some((meta.modified().ok()?, meta.len()))
+        });
+        RunStamp { run_id, state }
+    }
+}
+
 /// The run screen: the review state, its worker, channel and caches. It
 /// lives on while the home screen is shown.
 struct Tui<'a> {
@@ -163,6 +186,12 @@ struct Tui<'a> {
     worker: Option<Worker>,
     last_refresh: Instant,
     refresh_pending: bool,
+    /// The run on disk as of the last load.
+    stamp: RunStamp,
+    /// When the stamp was last compared; `None` means compare at once.
+    last_outside_check: Option<Instant>,
+    /// The last load found no run: its files were removed from outside.
+    gone: bool,
     /// A phase or the run ended: ring the bell after the next draw (if the
     /// setting is on).
     bell: bool,
@@ -767,6 +796,21 @@ impl<'a> Ui<'a> {
             if tui.refresh_pending && tui.last_refresh.elapsed() >= REFRESH_EVERY {
                 tui.refresh();
             }
+            if self.screen == Screen::Run {
+                tui.follow_outside_changes();
+            }
+        }
+        // The run was removed from outside: leave its screen for the home one.
+        if self.run.as_ref().is_some_and(|tui| tui.gone) {
+            self.run = None;
+            self.home.reload(true);
+            if self.screen == Screen::Run {
+                self.screen = Screen::Home;
+                self.home.home.message = Some(Notice::info(
+                    "The run no longer exists: its files were removed.",
+                ));
+            }
+            self.home.dirty = true;
         }
         if let Some(run) = self.home.started.take() {
             self.begin_run(run);
@@ -948,6 +992,8 @@ impl<'a> Ui<'a> {
         self.screen = Screen::Run;
         if let Some(tui) = &mut self.run {
             tui.dirty = true;
+            // The run may have changed while the home screen was shown.
+            tui.last_outside_check = None;
         }
     }
 }
@@ -959,11 +1005,14 @@ impl<'a> Tui<'a> {
         Tui {
             cwd,
             app,
+            stamp: RunStamp::read(run.git.root()),
             run,
             bell: false,
             worker: None,
             last_refresh: Instant::now(),
             refresh_pending: false,
+            last_outside_check: None,
+            gone: false,
             dirty: true,
         }
     }
@@ -1134,17 +1183,38 @@ impl Tui<'_> {
         });
     }
 
+    /// Reloads the run when another process changed it, so the screen
+    /// follows `next`, `abort` or `merge` run in another terminal without a
+    /// key press. A phase of this screen's own worker is left alone: its
+    /// events refresh the screen.
+    fn follow_outside_changes(&mut self) {
+        if self.worker.is_some()
+            || self
+                .last_outside_check
+                .is_some_and(|at| at.elapsed() < OUTSIDE_CHECK_EVERY)
+        {
+            return;
+        }
+        self.last_outside_check = Some(Instant::now());
+        if RunStamp::read(self.run.git.root()) != self.stamp {
+            self.refresh();
+        }
+    }
+
     /// Reloads the run and the caches of the selected phase.
     fn refresh(&mut self) {
         self.dirty = true;
         self.refresh_pending = false;
         self.last_refresh = Instant::now();
+        // Taken before the load: a change made while loading is seen at the
+        // next check, never lost.
+        self.stamp = RunStamp::read(self.run.git.root());
         match ops::load_current(self.cwd) {
             Ok(Some(run)) => {
                 self.run = run;
                 self.app.set_view(data::load_run_view(&self.run));
             }
-            Ok(None) => {}
+            Ok(None) => self.gone = true,
             Err(err) => self.app.message = Some(Notice::error(format!("Error: {err}"))),
         }
         self.load_caches();
@@ -1397,6 +1467,143 @@ mod tests {
         assert!(is_force_key(key('q', KeyModifiers::NONE)));
         assert!(!is_force_key(key('c', KeyModifiers::NONE)));
         assert!(!is_force_key(key('x', KeyModifiers::NONE)));
+    }
+
+    /// A repository with a plan and a started run, made without any agent. The
+    /// identity is the repository's own: the global configuration is not used.
+    fn repo_with_run() -> (tempfile::TempDir, Run) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .envs([
+                    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+                    ("GIT_CONFIG_NOSYSTEM", "1"),
+                ])
+                .output()
+                .expect("run git");
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "T"]);
+        git(&["config", "user.email", "t@example.com"]);
+        let plan = dir.path().join("phasewise.md");
+        std::fs::write(
+            &plan,
+            "# Plan\n\n## Phase 1: One\n\nDo one.\n\n## Phase 2: Two\n\nDo two.\n",
+        )
+        .expect("write plan");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+        let run = ops::start(dir.path(), &plan, None, &Overrides::default()).expect("start");
+        (dir, run)
+    }
+
+    /// Another process marks phase 1 done, as `phasewise next` would.
+    fn finish_phase_one_from_outside(paths: &RunPaths) {
+        let mut state = RunState::load(paths).expect("load state");
+        state.phases[0].status = PhaseStatus::Done;
+        state.save(paths).expect("save state");
+        // Coarse file system clocks can give two writes the same time.
+        let file = std::fs::File::options()
+            .write(true)
+            .open(paths.state_file())
+            .expect("open state");
+        file.set_modified(SystemTime::now() + Duration::from_secs(60))
+            .expect("set time");
+    }
+
+    #[test]
+    fn the_run_screen_reloads_a_run_changed_by_another_process() {
+        let (dir, run) = repo_with_run();
+        let outside = run.paths.clone();
+        let mut tui = Tui::new(dir.path(), run, &Settings::default());
+        assert_eq!(tui.run.state.phases[0].status, PhaseStatus::Pending);
+
+        // Nothing changed: no reload, no redraw.
+        tui.dirty = false;
+        tui.follow_outside_changes();
+        assert!(!tui.dirty);
+
+        finish_phase_one_from_outside(&outside);
+        // The check is rate limited, so the screen does not look yet...
+        tui.follow_outside_changes();
+        assert_eq!(tui.run.state.phases[0].status, PhaseStatus::Pending);
+        // ...and follows on the next one.
+        tui.last_outside_check = None;
+        tui.follow_outside_changes();
+        assert_eq!(tui.run.state.phases[0].status, PhaseStatus::Done);
+        assert!(tui.dirty);
+
+        // Seen once: the same state is not reloaded again.
+        tui.dirty = false;
+        tui.last_outside_check = None;
+        tui.follow_outside_changes();
+        assert!(!tui.dirty);
+    }
+
+    #[test]
+    fn the_run_screen_leaves_a_running_worker_alone() {
+        let (dir, run) = repo_with_run();
+        let outside = run.paths.clone();
+        let mut tui = Tui::new(dir.path(), run, &Settings::default());
+        tui.worker = Some(Worker {
+            handle: thread::spawn(|| Ok(Finished::Phase(NextOutcome::Completed))),
+            cancel: Arc::new(AtomicBool::new(false)),
+            events: mpsc::channel().1,
+        });
+        finish_phase_one_from_outside(&outside);
+        tui.follow_outside_changes();
+        assert_eq!(tui.run.state.phases[0].status, PhaseStatus::Pending);
+    }
+
+    #[test]
+    fn a_run_removed_from_outside_closes_the_run_screen() {
+        let (dir, run) = repo_with_run();
+        let run_dir = run.paths.dir().to_path_buf();
+        let data = data::load_home(dir.path()).expect("home data");
+        let mut ui = Ui::new(
+            dir.path(),
+            Home::new(data),
+            Some(run),
+            Screen::Run,
+            Arc::new(AtomicBool::new(false)),
+            Settings::default(),
+        );
+        ui.pump();
+        assert!(ui.run.is_some(), "nothing changed yet");
+        std::fs::remove_dir_all(run_dir).expect("remove the run");
+        ui.run.as_mut().expect("the run").last_outside_check = None;
+        ui.pump();
+        assert!(ui.run.is_none());
+        assert_eq!(ui.screen, Screen::Home);
+        let message = ui.home.home.message.as_ref().expect("a message");
+        assert!(
+            message.text.contains("no longer exists"),
+            "{}",
+            message.text
+        );
+    }
+
+    #[test]
+    fn the_stamp_changes_with_the_state_file_and_the_current_run() {
+        let (dir, run) = repo_with_run();
+        let before = RunStamp::read(dir.path());
+        assert_eq!(before, RunStamp::read(dir.path()));
+        assert_eq!(before.run_id.as_deref(), Some(run.state.run_id.as_str()));
+
+        finish_phase_one_from_outside(&run.paths);
+        let after_write = RunStamp::read(dir.path());
+        assert_ne!(before, after_write);
+
+        PhasewiseDir::new(dir.path())
+            .write_current("another-run")
+            .expect("write current");
+        let after_switch = RunStamp::read(dir.path());
+        assert_ne!(after_write, after_switch);
+        assert_eq!(after_switch.state, None);
     }
 
     fn home_tui() -> HomeTui<'static> {

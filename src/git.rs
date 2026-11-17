@@ -253,8 +253,10 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
     /// and returns the short SHA of the new `HEAD`. This is the user's own
     /// commit: their hooks and signing apply.
     pub fn commit_file(&self, path: &str, message: &str) -> Result<String> {
-        self.run(&["add", "--", path])?;
-        let args = ["commit", "-q", "-F", "-", "--", path];
+        // A path is a path, not a pattern: without `--literal-pathspecs`, the
+        // plan `plan[v2].md` or `a*.md` would also add and commit its neighbours.
+        self.run(&["--literal-pathspecs", "add", "--", path])?;
+        let args = ["--literal-pathspecs", "commit", "-q", "-F", "-", "--", path];
         let output = self.output(&args, Some(message))?;
         if !output.status.success() {
             return Err(self.failure(&args, &output));
@@ -772,6 +774,38 @@ mod tests {
         assert_eq!(tracked.trim(), "plan.md");
         let status = git.run(&["status", "--porcelain"]).expect("status");
         assert_eq!(status.trim(), "A  other.txt");
+    }
+
+    #[test]
+    fn commit_file_takes_the_path_literally() {
+        let (dir, git) = repo();
+        // `a*.md` is a pattern for git unless told otherwise.
+        fs::write(dir.path().join("a*.md"), "plan").expect("write");
+        fs::write(dir.path().join("ab.md"), "other").expect("write");
+        git.commit_file("a*.md", "Add phasewise plan")
+            .expect("commit_file");
+        let tracked = git
+            .run(&["ls-tree", "-r", "--name-only", "HEAD"])
+            .expect("ls-tree");
+        assert_eq!(tracked.trim(), "a*.md");
+        let status = git.run(&["status", "--porcelain"]).expect("status");
+        assert_eq!(status.trim(), "?? ab.md");
+    }
+
+    #[test]
+    fn commit_file_does_not_take_a_staged_neighbour() {
+        let (dir, git) = repo();
+        fs::write(dir.path().join("plan[v2].md"), "plan").expect("write");
+        fs::write(dir.path().join("plan2.md"), "other").expect("write");
+        git.run(&["add", "--", "plan2.md"]).expect("stage other");
+        git.commit_file("plan[v2].md", "Add phasewise plan")
+            .expect("commit_file");
+        let tracked = git
+            .run(&["ls-tree", "-r", "--name-only", "HEAD"])
+            .expect("ls-tree");
+        assert_eq!(tracked.trim(), "plan[v2].md");
+        let status = git.run(&["status", "--porcelain"]).expect("status");
+        assert_eq!(status.trim(), "A  plan2.md");
     }
 
     #[test]
