@@ -73,6 +73,9 @@ pub fn validate_model(model: &str) -> Result<(), String> {
             "the model name `{model}` must not start with `-`, it would be read as a flag"
         ));
     }
+    if model.chars().any(char::is_control) {
+        return Err("the model name must not contain control characters".to_string());
+    }
     Ok(())
 }
 
@@ -401,6 +404,14 @@ fn parse_front_matter(
         config.max_cost_usd = Some(v);
     }
     if let Some(v) = raw.agent_args {
+        // A NUL byte cannot be passed to a program: the run would fail at the
+        // start of the first phase, after the plan passed `check`.
+        if v.iter().any(|a| a.contains('\0')) {
+            errors.push(err(
+                key_line(text, 2, fm_lines, "agent_args"),
+                "`agent_args` must not contain a NUL byte",
+            ));
+        }
         config.agent_args = v;
     }
     for (key, value, slot) in [
@@ -945,6 +956,15 @@ mod tests {
                 .config
                 .agent_set
         );
+    }
+
+    #[test]
+    fn a_nul_byte_in_the_model_or_the_agent_args_is_a_plan_error() {
+        let e = errs("+++\nmodel = \"a\\u0000b\"\n+++\n## A\n\nbody\n");
+        assert!(e[0].1.contains("control characters"), "{e:?}");
+        let e = errs("+++\nagent_args = [\"--x\\u0000\"]\n+++\n## A\n\nbody\n");
+        assert!(e[0].1.contains("NUL byte"), "{e:?}");
+        assert_eq!(e[0].0, 2, "{e:?}");
     }
 
     #[test]

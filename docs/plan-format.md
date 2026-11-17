@@ -109,8 +109,9 @@ only; `PHASEWISE_PHASE_TIMEOUT_SECONDS` still overrides it. It is
 removed from the text the agent receives, like `verify` blocks. A phase can have
 one block, and it must come after a phase heading.
 
-- A model is a non-empty name of at most 100 characters, without whitespace and
-  not starting with `-`. List the names with `phasewise models`.
+- A model is a non-empty name of at most 100 characters, without whitespace or
+  control characters and not starting with `-`. `agent_args` entries must not
+  contain a NUL byte. List the names with `phasewise models`.
 - `default` is not a value in a plan: remove the key to use the agent's own
   default.
 - Precedence, highest first: `--model` / `--effort` of `run`, `next` or `retry`

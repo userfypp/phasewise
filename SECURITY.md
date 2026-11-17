@@ -57,7 +57,9 @@ phasewise itself:
 - never logs in to an agent and never reads its credentials.
 
 phasewise is not a sandbox. A plan is a set of instructions for an agent that
-can run commands: treat it like a script you are about to run.
+can run commands: treat it like a script you are about to run. That includes the
+plan's `agent_args`, which go last on the agent's command line and so can
+override the permission or sandbox options phasewise sets.
 
 ### Recommendations
 
