@@ -45,7 +45,7 @@ check runs as a child process in its own process group.
 | `main.rs` | Only calls `cli::main()`. |
 | `cli.rs` | clap definitions, dispatch, printing events, exit codes. |
 | `ops.rs` | Run-level operations shared by the CLI and the TUI: `start`, `next`, `approve`, `retry`, `accept`, `rollback`, `merge`, `abort`, `execute`, `commit_plan`, loading the current run, and `create_plan` for `phasewise plan`. `run_one` picks the agent of each phase with `engine::phase_agent`. |
-| `engine.rs` | One phase cycle (`run_phase`) and the agent-following loop shared with planning (`run_agent_session`): spawn, stdin, reader thread, logs, timeout, cancel, leftovers. |
+| `engine.rs` | One phase cycle (`run_phase`) and the agent-following loop shared with planning (`run_agent_session`): spawn, stdin, reader threads (stdout events, stderr copy), logs, timeout, cancel, leftovers. Each agent log is cut at 64 MiB (`verify::OUTPUT_LIMIT`) with a marker line; stdout keeps being parsed and stderr drained, so the limit never stops or blocks the agent. |
 | `plan.rs` | The plan model and parser (`pulldown-cmark` and `toml`), validation with line numbers, model and effort values. |
 | `prompt.rs` | Every text sent to an agent, and the extraction of a plan from an answer. Pure functions. |
 | `agent/mod.rs` | The `Agent` and `AgentParser` traits, `AgentEvent`, `LaunchOptions`, `ModelInfo`. |

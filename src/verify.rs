@@ -18,8 +18,9 @@ const TAIL_LINES: usize = 200;
 const TAIL_WINDOW: u64 = 64 * 1024;
 /// Most bytes one check may write to the log. A check that goes over it is
 /// stopped, so that a noisy command (`yes`, a test in a loop) cannot fill the
-/// disk during its timeout.
-const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
+/// disk during its timeout. The agent's logs use the same limit (see
+/// `engine::run_agent_session`), but are cut instead of stopping the agent.
+pub const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const LEFTOVER_GRACE: Duration = Duration::from_millis(200);
 const POLL: Duration = Duration::from_millis(20);

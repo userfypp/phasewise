@@ -452,11 +452,15 @@ to `.git/info/exclude`, so it is never committed:
   runs/<run-id>/
     state.json             phases, attempts, checkpoints, costs
     plan.md                the plan as it was when the run started
-    phase-01.attempt-1.jsonl        the agent's raw output
-    phase-01.attempt-1.stderr.log   the agent's error output
+    phase-01.attempt-1.jsonl        the agent's raw output (cut at 64 MiB)
+    phase-01.attempt-1.stderr.log   the agent's error output (cut at 64 MiB)
     phase-01.verify.log             output of the checks
   plans/<id>/              raw output and drafts of each `phasewise plan`
 ```
+
+The agent's two logs stop growing at 64 MiB each, so a noisy agent cannot fill
+your disk; the last line then says the log was truncated. The run itself is
+not affected.
 
 You can delete `.phasewise/` when no run is in progress. Your [user
 settings](#settings) live elsewhere, in your configuration directory.

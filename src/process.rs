@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::thread;
@@ -102,6 +102,10 @@ impl GroupChild {
 
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.stdout.take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.stderr.take()
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {

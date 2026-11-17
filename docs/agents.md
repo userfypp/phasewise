@@ -24,7 +24,10 @@ fake agents. Re-check this page whenever you upgrade either CLI
 - **Output is one JSON event per line.** Each raw line is appended to
   `.phasewise/runs/<run-id>/phase-NN.attempt-K.jsonl` (planning sessions use
   `.phasewise/plans/<plan-id>/attempt-K.jsonl`) and translated into
-  phasewise's own events. stderr goes to the matching `.stderr.log`.
+  phasewise's own events. stderr goes to the matching `.stderr.log`. Each of the two logs
+  stops growing at 64 MiB: stdout gets a final `{"type":"phasewise_truncated",...}`
+  line, stderr a final `[phasewise: stderr log truncated at 64 MiB]` line. The
+  agent is not affected: events are still parsed and stderr is still read.
 - **The parsers never fail.** Lines that are not JSON objects, unknown event
   types and unknown fields are ignored, so a newer CLI that adds events keeps
   working. A line over 16 MiB is saved to the log cut and not parsed, and a

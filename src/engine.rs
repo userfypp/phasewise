@@ -535,6 +535,17 @@ pub fn run_agent_session(
     session: AgentSession,
     on_event: &mut dyn FnMut(AgentEvent) -> Result<()>,
 ) -> Result<AgentRun> {
+    run_agent_session_limited(session, verify::OUTPUT_LIMIT, on_event)
+}
+
+/// `run_agent_session` with the most bytes each of the two logs may hold given.
+/// Past it a log is cut with a marker line; events keep being parsed and
+/// stderr keeps being drained, so the agent is never slowed or stopped by it.
+fn run_agent_session_limited(
+    session: AgentSession,
+    log_limit: u64,
+    on_event: &mut dyn FnMut(AgentEvent) -> Result<()>,
+) -> Result<AgentRun> {
     let AgentSession {
         mut command,
         group_file,
@@ -553,7 +564,7 @@ pub fn run_agent_session(
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::from(stderr_file));
+        .stderr(Stdio::piped());
     let mut child = match spawn_in_group(&mut command) {
         Ok(child) => child,
         Err(e) => {
@@ -573,9 +584,18 @@ pub fn run_agent_session(
             let _ = stdin.write_all(prompt.as_bytes());
         });
     }
+    let (stderr_done_tx, stderr_done) = mpsc::channel();
+    if let Some(stderr) = child.take_stderr() {
+        let log = CappedLog::new(stderr_file, log_limit, "stderr", false);
+        thread::spawn(move || {
+            copy_stderr(stderr, log);
+            let _ = stderr_done_tx.send(());
+        });
+    }
     let (tx, rx) = mpsc::channel();
     if let Some(stdout) = child.take_stdout() {
-        thread::spawn(move || read_stdout(stdout, stdout_file, parser, tx, LINE_LIMIT));
+        let log = CappedLog::new(stdout_file, log_limit, "stdout", true);
+        thread::spawn(move || read_stdout(stdout, log, parser, tx, LINE_LIMIT));
     } else {
         let _ = tx.send(Reader::Eof);
     }
@@ -583,6 +603,9 @@ pub fn run_agent_session(
     // Dropping the child kills whatever `follow_agent` left; after that there
     // is nothing for recovery to stop.
     drop(child);
+    // The group is gone, so the pipe is closed; the wait only bounds the case
+    // of a process that left the group and still holds it.
+    let _ = stderr_done.recv_timeout(EOF_WAIT);
     if let Some(path) = group_file {
         let _ = std::fs::remove_file(path);
     }
@@ -629,11 +652,99 @@ fn read_capped_line(
     Ok(Some(true))
 }
 
+/// An agent log file that stops growing at `limit` bytes. The first write that
+/// does not fit adds a marker line saying so (outside the limit); every later
+/// write is dropped.
+struct CappedLog {
+    file: File,
+    limit: u64,
+    written: u64,
+    /// Whether the marker was written.
+    cut: bool,
+    /// Whether the last byte written was a line break (or nothing yet).
+    at_line_start: bool,
+    /// Writes are whole lines: one that does not fit is dropped, not split,
+    /// and the marker is a JSON line, as the rest of the file.
+    whole_lines: bool,
+    /// `stdout` or `stderr`, for the marker.
+    name: &'static str,
+}
+
+impl CappedLog {
+    fn new(file: File, limit: u64, name: &'static str, whole_lines: bool) -> CappedLog {
+        CappedLog {
+            file,
+            limit,
+            written: 0,
+            cut: false,
+            at_line_start: true,
+            whole_lines,
+            name,
+        }
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        if self.cut || bytes.is_empty() {
+            return;
+        }
+        let room = self.limit.saturating_sub(self.written);
+        let take = if bytes.len() as u64 <= room {
+            bytes.len()
+        } else if self.whole_lines {
+            0
+        } else {
+            room as usize
+        };
+        // A full disk or a closed file only loses log text; the run goes on.
+        let _ = self.file.write_all(&bytes[..take]);
+        self.written += take as u64;
+        if take > 0 {
+            self.at_line_start = bytes[take - 1] == b'\n';
+        }
+        if take < bytes.len() {
+            self.cut = true;
+            let text = limit_text(self.limit);
+            let marker = if self.whole_lines {
+                format!(
+                    "{{\"type\":\"phasewise_truncated\",\"message\":\"phasewise: {} log truncated at {text}\"}}\n",
+                    self.name
+                )
+            } else {
+                let lead = if self.at_line_start { "" } else { "\n" };
+                format!("{lead}[phasewise: {} log truncated at {text}]\n", self.name)
+            };
+            let _ = self.file.write_all(marker.as_bytes());
+        }
+        let _ = self.file.flush();
+    }
+}
+
+fn limit_text(limit: u64) -> String {
+    if limit >= 1024 * 1024 {
+        format!("{} MiB", limit / (1024 * 1024))
+    } else {
+        format!("{limit} bytes")
+    }
+}
+
+/// Stderr thread: copies the agent's stderr to its log up to the log's limit,
+/// then keeps reading and drops the rest, so the agent never blocks on a full pipe.
+fn copy_stderr(mut stderr: impl Read, mut log: CappedLog) {
+    let mut chunk = [0u8; 8192];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => log.write(&chunk[..n]),
+        }
+    }
+}
+
 /// Reader thread: raw lines to the log, parsed events to the engine loop. A
-/// line over `line_limit` bytes is logged cut and not parsed.
+/// line over `line_limit` bytes is logged cut and not parsed. Parsing goes on
+/// after the log is full.
 fn read_stdout(
     stdout: impl std::io::Read,
-    mut log: File,
+    mut log: CappedLog,
     mut parser: Box<dyn AgentParser>,
     tx: Sender<Reader>,
     line_limit: u64,
@@ -641,11 +752,13 @@ fn read_stdout(
     let mut reader = BufReader::new(stdout);
     let mut buf = Vec::new();
     while let Ok(Some(too_long)) = read_capped_line(&mut reader, &mut buf, line_limit) {
-        let _ = log.write_all(&buf);
-        if !buf.ends_with(b"\n") {
-            let _ = log.write_all(b"\n");
+        if buf.ends_with(b"\n") {
+            log.write(&buf);
+        } else {
+            let mut line = buf.clone();
+            line.push(b'\n');
+            log.write(&line);
         }
-        let _ = log.flush();
         if too_long {
             continue;
         }
@@ -911,6 +1024,77 @@ pub fn cost_limit_reached(spent: f64, limit: f64) -> Option<(String, String)> {
 mod tests {
     use super::*;
     use crate::plan::{self, AgentKind};
+
+    /// Runs `script` with `sh -c` as a Claude Code session whose logs are cut at
+    /// `limit` bytes. Returns the run and the two logs' text. Fails the test
+    /// when the session takes over 20 s (a pipe nobody drains would hang it).
+    fn run_script(script: &str, limit: u64) -> (AgentRun, String, String) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (out, err) = (dir.path().join("out.jsonl"), dir.path().join("err.log"));
+        let mut command = Command::new("sh");
+        command.args(["-c", script]).current_dir(dir.path());
+        let cancel = AtomicBool::new(false);
+        let session = AgentSession {
+            command,
+            group_file: None,
+            prompt: String::new(),
+            stdout_log: &out,
+            stderr_log: &err,
+            parser: crate::agent::agent_for(AgentKind::Claude).parser(dir.path()),
+            timeout: Duration::from_secs(20),
+            kill_grace: Duration::from_millis(200),
+            cancel: &cancel,
+        };
+        let started = Instant::now();
+        let run = run_agent_session_limited(session, limit, &mut |_| Ok(())).expect("session");
+        assert!(!run.timed_out, "the session hung");
+        assert!(started.elapsed() < Duration::from_secs(15));
+        let read = |p: &Path| std::fs::read_to_string(p).expect("log");
+        (run, read(&out), read(&err))
+    }
+
+    #[test]
+    fn a_noisy_stderr_is_cut_in_its_log_and_does_not_block_the_agent() {
+        // 20 MB of stderr (far more than a pipe holds), then a normal result.
+        let script = "yes warning | head -c 20000000 >&2 && \
+            printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"total_cost_usd\":0.5}'";
+        let (run, out, err) = run_script(script, 4096);
+        assert_eq!(run.exit_code, Some(0));
+        assert_eq!(run.cost_usd, Some(0.5));
+        assert!(out.contains("\"result\""));
+        assert!(err.len() < 4096 + 100, "log is {} bytes", err.len());
+        assert!(
+            err.ends_with("\n[phasewise: stderr log truncated at 4096 bytes]\n")
+                || err.ends_with("warning\n[phasewise: stderr log truncated at 4096 bytes]\n"),
+            "tail: {:?}",
+            &err[err.len().saturating_sub(80)..]
+        );
+    }
+
+    #[test]
+    fn a_small_stderr_is_kept_whole() {
+        let (_, _, err) = run_script("echo oops >&2", 4096);
+        assert_eq!(err, "oops\n");
+    }
+
+    #[test]
+    fn a_long_stdout_is_cut_in_its_log_but_still_parsed() {
+        // 5000 short valid events, then the result.
+        let script = "i=0; while [ $i -lt 5000 ]; do \
+            echo '{\"type\":\"unknown_event\",\"n\":1}'; i=$((i+1)); done; \
+            printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"total_cost_usd\":0.25}'";
+        let (run, out, _) = run_script(script, 4096);
+        assert_eq!(run.cost_usd, Some(0.25));
+        assert_eq!(run.finished_ok, Some(true));
+        assert!(out.len() < 4096 + 200, "log is {} bytes", out.len());
+        let last = out.lines().last().expect("a line");
+        assert_eq!(
+            last,
+            r#"{"type":"phasewise_truncated","message":"phasewise: stdout log truncated at 4096 bytes"}"#
+        );
+        // Every line, the marker included, is valid JSON.
+        assert!(out.lines().all(|l| l.starts_with('{') && l.ends_with('}')));
+    }
 
     fn lines_of(input: &[u8], limit: u64) -> Vec<(String, bool)> {
         let mut reader = BufReader::with_capacity(8, input);
