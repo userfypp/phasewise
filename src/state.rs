@@ -6,6 +6,7 @@ use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use jiff::Timestamp;
@@ -232,6 +233,11 @@ impl RunPaths {
         self.dir.join("lock")
     }
 
+    /// The process group of the agent while it runs (see [`record_group`]).
+    pub fn group_file(&self) -> PathBuf {
+        self.dir.join("agent.group")
+    }
+
     pub fn agent_stdout_log(&self, phase: usize, attempt: u32) -> PathBuf {
         self.dir
             .join(format!("phase-{phase:02}.attempt-{attempt}.jsonl"))
@@ -250,8 +256,21 @@ impl RunPaths {
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `bytes` to `path` through a temp file in the same directory,
-/// `sync_all` and `rename`. Creates the parent directory if needed.
+/// `sync_all` and `rename`. Creates the parent directory if needed. When
+/// `path` is a symbolic link (a settings file kept in a dotfiles repository),
+/// the file it points to is written: renaming over the link would replace it
+/// with a regular file and leave the original stale.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let target;
+    let is_link = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    // A link that points nowhere cannot be resolved: it is replaced as before.
+    let path = match is_link.then(|| fs::canonicalize(path)) {
+        Some(Ok(resolved)) => {
+            target = resolved;
+            target.as_path()
+        }
+        _ => path,
+    };
     let parent = path.parent().ok_or_else(|| {
         anyhow!(
             "Cannot write {}: it has no parent directory",
@@ -539,16 +558,102 @@ pub fn load_locked(paths: &RunPaths, _lock: &LockGuard) -> Result<RunState> {
     Ok(state)
 }
 
+/// How long a leftover agent has to stop on `TERM` before it gets `KILL`.
+const LEFTOVER_GRACE: Duration = Duration::from_secs(2);
+
+/// Writes the id of the agent's process group, and when its leader started,
+/// to `path`, so that a phasewise killed without a chance to clean up (`kill
+/// -9`, a power cut) does not leave the agent running over a tree that a
+/// retry is about to reset. Best effort: the agent runs without it.
+pub fn record_group(path: &Path, pgid: u32) {
+    let started = match process::leader(pgid) {
+        process::Leader::Started(text) => text,
+        _ => String::new(),
+    };
+    let _ = write_atomic(path, format!("{pgid}\n{started}\n").as_bytes());
+}
+
+/// What became of the group a dead phasewise recorded.
+#[derive(Debug, PartialEq, Eq)]
+enum Leftover {
+    /// Nothing recorded, or nothing of it is left.
+    None,
+    /// It was still running and has been stopped.
+    Stopped,
+    /// Something holds that group id, but it could not be told whether it is
+    /// the recorded agent, so it was left alone.
+    Unverified(u32),
+}
+
+/// Stops the process group recorded at `path` by a phasewise that died, and
+/// forgets the record.
+///
+/// A PID can come back for another process, after a reboot or a long time, so
+/// the group is signalled only when it is certainly the one that was recorded:
+/// its leader started at the recorded time, or the leader is gone while other
+/// members still hold the id (the system does not give the id of a group in
+/// use to another process). When that cannot be told, nothing is signalled.
+fn stop_recorded_group(path: &Path) -> Leftover {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Leftover::None;
+    };
+    let _ = fs::remove_file(path);
+    let mut lines = text.lines();
+    let Some(pgid) = lines.next().and_then(|l| l.trim().parse::<u32>().ok()) else {
+        return Leftover::None;
+    };
+    // 0 and 1 are never an agent, and `kill` takes a negative PID as a group.
+    if pgid <= 1 || i32::try_from(pgid).is_err() {
+        return Leftover::None;
+    }
+    let recorded = lines.next().map(str::trim).filter(|t| !t.is_empty());
+    let ours = match process::leader(pgid) {
+        process::Leader::Started(now) => recorded == Some(now.as_str()),
+        process::Leader::Gone => true,
+        process::Leader::Unknown => false,
+    };
+    if ours {
+        if process::stop_group(pgid, LEFTOVER_GRACE) {
+            Leftover::Stopped
+        } else {
+            Leftover::None
+        }
+    } else if process::group_exists(pgid) {
+        Leftover::Unverified(pgid)
+    } else {
+        Leftover::None
+    }
+}
+
 fn recover_orphans(state: &mut RunState, paths: &RunPaths) -> Result<()> {
     let now = Timestamp::now();
     let mut changed = false;
+    // The agent of the dead process, if it is still there, goes first: nothing
+    // may change the tree under it.
+    let mut detail = "phasewise stopped while this phase was running".to_string();
+    if state
+        .phases
+        .iter()
+        .any(|p| matches!(p.status, PhaseStatus::Running | PhaseStatus::Verifying))
+    {
+        match stop_recorded_group(&paths.group_file()) {
+            Leftover::None => {}
+            Leftover::Stopped => {
+                detail.push_str("; its agent was still running and has been stopped");
+            }
+            Leftover::Unverified(pgid) => detail.push_str(&format!(
+                "; its agent may still be running (process group {pgid}, which could not be \
+                 checked): stop it with `kill -- -{pgid}` before retrying"
+            )),
+        }
+    }
     for phase in &mut state.phases {
         if matches!(phase.status, PhaseStatus::Running | PhaseStatus::Verifying) {
             phase.status = PhaseStatus::Failed;
             phase.finished_at = Some(now);
             phase.failure = Some(Failure {
                 kind: FailureKind::Interrupted,
-                detail: "phasewise stopped while this phase was running".to_string(),
+                detail: detail.clone(),
             });
             changed = true;
         }
@@ -574,6 +679,91 @@ pub fn run_branch_name(run_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A group of its own with one `sleep` in it, as an agent would be.
+    fn leftover_agent() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep")
+    }
+
+    #[test]
+    fn a_recorded_group_is_stopped_and_forgotten() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("agent.group");
+        let mut agent = leftover_agent();
+        record_group(&file, agent.id());
+        assert_eq!(stop_recorded_group(&file), Leftover::Stopped);
+        assert!(!file.exists());
+        // It died of the signal, and `wait` reaps it.
+        assert!(!agent.wait().expect("wait").success());
+    }
+
+    #[test]
+    fn a_group_whose_leader_started_at_another_time_is_left_alone() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("agent.group");
+        let mut agent = leftover_agent();
+        // The PID was recorded for a process that has since died, and another
+        // one got it.
+        fs::write(&file, format!("{}\nMon Jan  1 00:00:00 2001\n", agent.id())).expect("write");
+        assert_eq!(
+            stop_recorded_group(&file),
+            Leftover::Unverified(agent.id()),
+            "the user is told it was not checked"
+        );
+        assert!(!file.exists(), "the stale record is dropped");
+        assert!(process::is_alive(agent.id()));
+        let _ = agent.kill();
+        let _ = agent.wait();
+    }
+
+    #[test]
+    fn a_group_without_a_recorded_start_time_is_left_alone_while_its_leader_lives() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("agent.group");
+        let mut agent = leftover_agent();
+        fs::write(&file, format!("{}\n\n", agent.id())).expect("write");
+        assert_eq!(stop_recorded_group(&file), Leftover::Unverified(agent.id()));
+        assert!(process::is_alive(agent.id()));
+        let _ = agent.kill();
+        let _ = agent.wait();
+    }
+
+    #[test]
+    fn a_record_of_a_group_that_is_gone_stops_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("agent.group");
+        let mut agent = leftover_agent();
+        record_group(&file, agent.id());
+        let _ = agent.kill();
+        let _ = agent.wait();
+        assert_eq!(stop_recorded_group(&file), Leftover::None);
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_damaged_or_impossible_record_stops_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("agent.group");
+        for text in [
+            "",
+            "x\n",
+            "0\n",
+            "1\n",
+            "-5\n",
+            "4294967295\n",
+            "99999999999\n",
+        ] {
+            fs::write(&file, text).expect("write");
+            assert_eq!(stop_recorded_group(&file), Leftover::None, "{text:?}");
+            assert!(!file.exists(), "{text:?}");
+        }
+        assert_eq!(stop_recorded_group(&file), Leftover::None, "no file");
+    }
+
     #[test]
     fn taking_over_removes_the_lock_that_was_seen() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -710,6 +900,56 @@ mod tests {
         assert_eq!(names, vec!["file.txt".to_string()]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_goes_through_a_symlink_and_keeps_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("dotfiles");
+        fs::create_dir(&store).unwrap();
+        let real = store.join("settings.toml");
+        fs::write(&real, "old").unwrap();
+        let link = dir.path().join("settings.toml");
+        symlink(&real, &link).unwrap();
+
+        write_atomic(&link, b"new").unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        // No temp file in either directory.
+        for d in [dir.path(), store.as_path()] {
+            let leftovers = fs::read_dir(d)
+                .unwrap()
+                .filter(|e| {
+                    let name = e.as_ref().unwrap().file_name();
+                    name.to_string_lossy().ends_with(".tmp")
+                })
+                .count();
+            assert_eq!(leftovers, 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_replaces_a_link_that_points_nowhere() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("settings.toml");
+        symlink(dir.path().join("missing.toml"), &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(
+            !fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&link).unwrap(), "new");
+    }
+
     #[test]
     fn run_id_format() {
         let now: Timestamp = "2026-03-04T05:06:07Z".parse().unwrap();
@@ -808,6 +1048,69 @@ mod tests {
         let err = LockGuard::acquire(&paths).unwrap_err().to_string();
         assert!(err.contains("in use"), "{err}");
         assert!(paths.lock_file().exists());
+    }
+
+    fn failure_detail_after_recovering_with(group_record: &str) -> (String, std::process::Child) {
+        let (_dir, paths) = temp_paths();
+        let agent = leftover_agent();
+        let mut state = sample();
+        state.phases[0].status = PhaseStatus::Running;
+        state.save(&paths).unwrap();
+        fs::write(
+            paths.group_file(),
+            group_record.replace("{pid}", &agent.id().to_string()),
+        )
+        .unwrap();
+        let guard = LockGuard::acquire(&paths).unwrap();
+        let loaded = load_locked(&paths, &guard).unwrap();
+        let detail = loaded.phases[0].failure.as_ref().unwrap().detail.clone();
+        (detail, agent)
+    }
+
+    #[test]
+    fn recovery_says_when_it_stopped_the_agent_and_when_it_could_not_check() {
+        let (detail, mut agent) = failure_detail_after_recovering_with("{pid}\n");
+        let pid = agent.id();
+        assert_eq!(
+            detail,
+            format!(
+                "phasewise stopped while this phase was running; its agent may still be \
+                 running (process group {pid}, which could not be checked): stop it with \
+                 `kill -- -{pid}` before retrying"
+            )
+        );
+        assert!(process::is_alive(pid), "an unchecked group is left alone");
+        let _ = agent.kill();
+        let _ = agent.wait();
+
+        let (_dir, paths) = temp_paths();
+        let mut agent = leftover_agent();
+        record_group(&paths.group_file(), agent.id());
+        let mut state = sample();
+        state.phases[0].status = PhaseStatus::Running;
+        state.save(&paths).unwrap();
+        let guard = LockGuard::acquire(&paths).unwrap();
+        let loaded = load_locked(&paths, &guard).unwrap();
+        assert_eq!(
+            loaded.phases[0].failure.as_ref().unwrap().detail,
+            "phasewise stopped while this phase was running; its agent was still running \
+             and has been stopped"
+        );
+        let _ = agent.wait();
+    }
+
+    #[test]
+    fn recovery_without_a_record_keeps_the_plain_detail() {
+        let (_dir, paths) = temp_paths();
+        let mut state = sample();
+        state.phases[0].status = PhaseStatus::Running;
+        state.save(&paths).unwrap();
+        let guard = LockGuard::acquire(&paths).unwrap();
+        let loaded = load_locked(&paths, &guard).unwrap();
+        assert_eq!(
+            loaded.phases[0].failure.as_ref().unwrap().detail,
+            "phasewise stopped while this phase was running"
+        );
     }
 
     #[test]

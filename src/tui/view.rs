@@ -628,6 +628,51 @@ pub(super) mod tests {
         };
     }
 
+    /// Sizes for the sweeps: every one up to a few cells (the "too small"
+    /// message), and a spread around the smallest size the screens draw at.
+    pub(in crate::tui) fn sizes() -> Vec<(u16, u16)> {
+        let small = (0..=8).flat_map(|w| (0..=8).map(move |h| (w, h)));
+        let around_the_minimum = [MIN_WIDTH - 1, MIN_WIDTH, MIN_WIDTH + 1, 100, 140, 300]
+            .into_iter()
+            .flat_map(|w| {
+                [MIN_HEIGHT - 1, MIN_HEIGHT, MIN_HEIGHT + 1, 30, 60]
+                    .into_iter()
+                    .map(move |h| (w, h))
+            });
+        small.chain(around_the_minimum).collect()
+    }
+
+    #[test]
+    fn no_mode_panics_at_any_size() {
+        use crate::tui::app::Mode;
+        let modes = [
+            Mode::Normal,
+            Mode::Help,
+            Mode::ConfirmRollback(1, 0),
+            Mode::ConfirmInterrupt(0),
+            Mode::ConfirmQuit(0),
+            Mode::ConfirmAbandon(0),
+            Mode::ConfirmMerge(0),
+            Mode::Note("a note with some words in it".into()),
+            Mode::Search("needle".into()),
+            Mode::Settings(SettingsPanel::new(Settings::default())),
+        ];
+        for mode in modes {
+            for tab in Tab::ALL {
+                let mut app = app();
+                with_diff(&mut app);
+                app.tab = tab;
+                app.mode = mode.clone();
+                app.message = Some(Notice::warn(
+                    "A message that is long enough to wrap, probably",
+                ));
+                for (width, height) in sizes() {
+                    render(&mut app, width, height);
+                }
+            }
+        }
+    }
+
     #[test]
     fn phase_list_and_diff_tab() {
         let mut app = app();

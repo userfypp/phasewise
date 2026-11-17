@@ -13,7 +13,6 @@ welcome (see [Labels](../CONTRIBUTING.md#labels)).
 
 ## Planned
 
-- [Report a run as Markdown for a pull request description](https://github.com/userfypp/phasewise/issues/31) (#31)
 - [Run a user command when a phase ends](https://github.com/userfypp/phasewise/issues/32) (#32)
 - [Machine-readable event stream: `run --json`](https://github.com/userfypp/phasewise/issues/33) (#33)
 - [A spending limit per phase](https://github.com/userfypp/phasewise/issues/34) (#34)
@@ -30,15 +29,11 @@ Found in an audit and grouped by area:
 - [Run screen: fixes and missing features (tabs in diffs, long diffs, stale screen, chaining phases)](https://github.com/userfypp/phasewise/issues/83) (#83)
 - [Plan, timeout and settings validation (huge timeouts, BOM, empty titles)](https://github.com/userfypp/phasewise/issues/84) (#84)
 - [Handling of the checks' output](https://github.com/userfypp/phasewise/issues/85) (#85)
-- [`settings set` loses updates when run at the same time](https://github.com/userfypp/phasewise/issues/75) (#75)
-- [Hiding the repository path can mangle other paths](https://github.com/userfypp/phasewise/issues/76) (#76)
-- [`doctor` says the tools are ready despite repository problems](https://github.com/userfypp/phasewise/issues/77) (#77)
 
 ## Later
 
 Features:
 
-- [Per-phase timeout in the phase settings block](https://github.com/userfypp/phasewise/issues/36) (#36)
 - [Open a phase's diff in the user's editor or difftool](https://github.com/userfypp/phasewise/issues/37) (#37)
 - [Commands to run before a phase](https://github.com/userfypp/phasewise/issues/38) (#38)
 - [`--model` for the phases of the other agent in a mixed plan](https://github.com/userfypp/phasewise/issues/39) (#39)
@@ -55,8 +50,6 @@ Open design questions:
 
 Fixes and housekeeping:
 
-- [`doctor` does not check that the plan's own agent is installed](https://github.com/userfypp/phasewise/issues/43) (#43)
-- [The cost limit compares floats without tolerance and the message rounds](https://github.com/userfypp/phasewise/issues/44) (#44)
 - [Take the run lock with `File::lock` (blocked on a newer MSRV)](https://github.com/userfypp/phasewise/issues/45) (#45)
 - [Fuzz or property tests for the plan parser](https://github.com/userfypp/phasewise/issues/52) (#52)
 - [Check the agent CLIs for changed flags on a schedule](https://github.com/userfypp/phasewise/issues/53) (#53)
