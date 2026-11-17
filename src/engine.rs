@@ -640,11 +640,7 @@ fn read_stdout(
 ) {
     let mut reader = BufReader::new(stdout);
     let mut buf = Vec::new();
-    loop {
-        let too_long = match read_capped_line(&mut reader, &mut buf, line_limit) {
-            Ok(Some(too_long)) => too_long,
-            Ok(None) | Err(_) => break,
-        };
+    while let Ok(Some(too_long)) = read_capped_line(&mut reader, &mut buf, line_limit) {
         let _ = log.write_all(&buf);
         if !buf.ends_with(b"\n") {
             let _ = log.write_all(b"\n");
@@ -914,6 +910,7 @@ pub fn cost_limit_reached(spent: f64, limit: f64) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::{self, AgentKind};
 
     fn lines_of(input: &[u8], limit: u64) -> Vec<(String, bool)> {
         let mut reader = BufReader::with_capacity(8, input);
@@ -970,9 +967,6 @@ mod tests {
             Some(("1.000004".to_string(), "1.000000".to_string()))
         );
     }
-
-    use super::*;
-    use crate::plan::{self, AgentKind};
 
     const PLAN: &str = "+++\nmodel = \"plan-m\"\neffort = \"low\"\n+++\n## A\n\nx\n\n```phasewise\nmodel = \"phase-m\"\n```\n\n## B\n\ny\n";
 
