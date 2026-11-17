@@ -187,17 +187,59 @@ fn read_tail(log_path: &Path, start: u64, end: u64) -> Result<String> {
     let mut bytes = Vec::new();
     file.take(end.saturating_sub(from))
         .read_to_end(&mut bytes)?;
+    // Colours and progress bars are for a terminal, not for the agent.
+    let text = clean_output(&String::from_utf8_lossy(&bytes));
     // The window may begin in the middle of a line (or of a character): drop
     // that partial line, unless nothing else is left (one very long line).
-    let mut body = bytes.as_slice();
+    let mut body = text.as_str();
     if from > start
-        && let Some(i) = body.iter().position(|&b| b == b'\n')
-        && !tail_lines(&String::from_utf8_lossy(&body[i + 1..])).is_empty()
+        && let Some(i) = body.find('\n')
+        && !tail_lines(&body[i + 1..]).is_empty()
     {
         body = &body[i + 1..];
     }
-    let text = String::from_utf8_lossy(body);
-    Ok(tail_lines(&text).join("\n"))
+    Ok(tail_lines(body).join("\n"))
+}
+
+/// Output of a check as plain text lines: escape sequences (colours, cursor
+/// moves, titles) are removed and a carriage return that is not part of a
+/// line ending starts a new line, so that a progress bar redrawn hundreds of
+/// times counts as the lines it is and not as one.
+fn clean_output(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                // CSI: parameters, then a final byte between @ and ~.
+                Some('[') => {
+                    for n in chars.by_ref() {
+                        if ('@'..='~').contains(&n) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or the string terminator `ESC \`.
+                Some(']') => {
+                    while let Some(n) = chars.next() {
+                        if n == '\x07' {
+                            break;
+                        }
+                        if n == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // Any other two-character sequence.
+                _ => {}
+            },
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\r' => out.push('\n'),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The last `TAIL_LINES` lines of `text` without phasewise's own trailer line.
@@ -248,6 +290,29 @@ mod tests {
         let log = dir.path().join("verify.log");
         std::fs::write(&log, content).expect("write");
         read_tail(&log, start as u64, content.len() as u64).expect("read_tail")
+    }
+
+    #[test]
+    fn tail_drops_colours_and_splits_progress_bars_into_lines() {
+        let out = b"\x1b[31mred\x1b[0m text\n\x1b]0;title\x07a\rb\rc\r\nd\nexit code: 1\n";
+        assert_eq!(tail_of(out, 0), "red text\na\nb\nc\nd");
+    }
+
+    #[test]
+    fn a_progress_bar_does_not_hide_the_failure_behind_the_line_limit() {
+        // One "line" of 500 redraws, then the real error: the error stays and
+        // the bar counts as the many lines it is.
+        let mut out = Vec::new();
+        for i in 0..500 {
+            out.extend_from_slice(format!("progress {i}\r").as_bytes());
+        }
+        out.extend_from_slice(b"\nerror: boom\nexit code: 1\n");
+        let tail = tail_of(&out, 0);
+        assert!(tail.ends_with("error: boom"), "{tail}");
+        assert!(
+            !tail.contains('\r') && tail.lines().count() <= TAIL_LINES,
+            "{tail}"
+        );
     }
 
     #[test]

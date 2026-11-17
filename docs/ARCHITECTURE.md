@@ -100,8 +100,10 @@ The run id is the UTC time plus four random hex characters:
 4. Otherwise the status is `verifying` and the checks run: the plan's global
    checks, then the phase's, in order, stopping at the first failure.
 5. A check failed and retries are left (`max_retries`): the failure report
-   (command, exit code, last 200 lines of output) goes back to the agent, in
-   the same session when its id is known, and the cycle repeats from step 2.
+   (command, exit code, last 200 lines of output, with escape sequences
+   removed and a carriage return counted as a line break) goes back to the
+   agent, in the same session when its id is known, and the cycle repeats from
+   step 2.
    No retries left, or the run has reached `max_cost_usd`: `failed` with
    `verify_failed`, and the tree is left as it is for the user to inspect.
    `ops` also refuses to start a phase (and `--auto` to approve one) once the
