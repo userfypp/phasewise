@@ -210,6 +210,32 @@ fn retry_accepts_a_checkpoint_commit_the_state_never_recorded() {
 }
 
 #[test]
+fn a_run_without_its_plan_copy_does_not_advise_init() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    let run_dir = env.state_path().replace("/state.json", "/plan.md");
+    std::fs::remove_file(env.repo.path().join(run_dir)).expect("remove the plan copy");
+    let status = env.exec(&["status"], &[]);
+    assert_eq!(status.code, 1, "{}{}", status.stdout, status.stderr);
+    assert!(
+        status.stderr.contains("its copy of the plan") && status.stderr.contains("is missing"),
+        "{}",
+        status.stderr
+    );
+    assert!(
+        !status.stderr.contains("phasewise init"),
+        "{}",
+        status.stderr
+    );
+    assert!(!status.stderr.contains(".."), "{}", status.stderr);
+    assert!(
+        status.stderr.contains(".phasewise/current"),
+        "{}",
+        status.stderr
+    );
+}
+
+#[test]
 fn a_deleted_run_branch_is_named_and_the_run_can_be_aborted() {
     let env = Env::new();
     env.ok(&["run"], &[]);

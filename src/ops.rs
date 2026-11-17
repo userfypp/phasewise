@@ -430,6 +430,17 @@ pub(crate) fn load_from_git(git: &Git) -> Result<Option<Run>> {
     let before = RunState::load(&paths).map_err(|e| damaged_run(&run_id, e))?;
     let state = load_with_recovery(&paths)?;
     let recovered = recovered_phases(&before, &state);
+    // `plan::load` would advise `phasewise init`, which is no way to get this
+    // copy back.
+    if !paths.plan_copy().exists() {
+        return Err(damaged_run(
+            &run_id,
+            anyhow!(
+                "its copy of the plan, {}, is missing",
+                paths.plan_copy().display()
+            ),
+        ));
+    }
     let plan = plan::load(&paths.plan_copy()).map_err(|e| damaged_run(&run_id, e))?;
     Ok(Some(Run {
         git: git.clone(),
