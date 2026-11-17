@@ -190,6 +190,7 @@ nothing else).
 │   ├── state.json                     the run's state
 │   ├── plan.md                        the plan as it was when the run started
 │   ├── lock                           PID of the process changing the run
+│   ├── agent.group                    process group of the running agent (see below)
 │   ├── phase-NN.attempt-K.jsonl       agent output, one event per line
 │   ├── phase-NN.attempt-K.stderr.log  agent stderr
 │   └── phase-NN.verify.log            check output, every attempt
@@ -256,7 +257,18 @@ These hold everywhere. A change that breaks one is a design change.
   whose process is gone is stale and replaced. With a live lock, read-only
   commands show the state as it is and mutating commands refuse.
 - **Interrupted work is recovered on load.** Without a live lock, a phase left
-  in `running` or `verifying` becomes `failed` with `interrupted`.
+  in `running` or `verifying` becomes `failed` with `interrupted`. While an
+  agent runs, `runs/<id>/agent.group` holds its process group and the start
+  time of its leader (`ps -o lstart=`); the engine removes it when the agent is
+  gone. If phasewise was killed without a chance to clean up, recovery stops
+  that group (`TERM`, 2 seconds, `KILL`) before anything else touches the tree.
+  A PID can come back for an unrelated process, so the group is signalled only
+  when its leader started at the recorded time, or the leader is gone while
+  other members still hold the id; when that cannot be told (`ps` missing, or
+  its start time for the leader differs, which a changed boot clock can cause),
+  nothing is signalled and the phase's failure names the group and the `kill`
+  to run by hand. The start time is read with `TZ=UTC`. The record is written a moment after the spawn, so a kill in that moment
+  leaves the agent unrecorded.
 - **Every child runs in its own process group** and is stopped as a group:
   `TERM`, a grace period (5 seconds for an agent, 2 for a check), then
   `KILL`. A child dropped without being stopped

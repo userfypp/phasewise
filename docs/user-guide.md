@@ -436,7 +436,10 @@ Environment variables:
   then retry.
 - **phasewise or the terminal was closed during a phase**: the agent is
   stopped, and the next phasewise command marks the phase as failed
-  (interrupted). Retry it.
+  (interrupted). Retry it. If phasewise was killed outright (`kill -9`) and the
+  agent kept running, that command stops the agent first, and the phase's
+  failure says so. If it cannot tell that the process is the agent, it leaves
+  it alone and the failure gives the `kill` command to run before retrying.
 - **Ctrl-C**: in commands, the first one stops the agent and marks the phase
   interrupted; a second one kills everything phasewise started and exits with
   130. On the screens, Ctrl-C works like `q`; while the screen says
