@@ -797,6 +797,41 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn no_mode_panics_at_any_size() {
+        let problems = vec![PlanProblem {
+            line: 3,
+            message: "a problem that is long enough to need wrapping in a narrow terminal".into(),
+        }];
+        let modes = [
+            Mode::Normal,
+            Mode::Help,
+            Mode::ConfirmQuit(0),
+            Mode::ConfirmStopPlan(1),
+            Mode::ModelPopup(1),
+            Mode::ModelInput("a-custom-model".into()),
+            Mode::EffortPopup(2),
+            Mode::GoalInput("a CLI to convert CSV files to JSON".into()),
+            Mode::ConfirmReplace("goal".into(), 0),
+            Mode::ConfirmCommitStart(0),
+            Mode::Error(vec!["Something failed.".into(), "Try again later.".into()]),
+        ];
+        let plans = [
+            PlanState::Missing,
+            valid_plan(),
+            PlanState::Invalid(problems),
+        ];
+        for plan in plans {
+            for mode in &modes {
+                let mut screen = home(plan.clone());
+                screen.mode = mode.clone();
+                for (width, height) in crate::tui::view::tests::sizes() {
+                    render_sized(&screen, width, height);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn valid_plan_uncommitted() {
         let mut home = home(valid_plan());
         home.data.plan_uncommitted = true;

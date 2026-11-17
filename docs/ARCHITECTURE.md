@@ -251,7 +251,9 @@ These hold everywhere. A change that breaks one is a design change.
 - **`git clean` never touches `.phasewise/`**: it runs with
   `-e /.phasewise/`, and the directory is also excluded.
 - **State is written atomically:** a temporary file in the same directory,
-  `sync_all`, then `rename`.
+  `sync_all`, then `rename`. A path that is a symbolic link (a settings file
+  kept in a dotfiles repository) is written through: the file it points to
+  is replaced and the link stays.
 - **One process changes a run at a time.** `runs/<id>/lock` holds the PID of
   the process running a mutating operation, created with `create_new`. A lock
   whose process is gone is stale and replaced. With a live lock, read-only
@@ -279,7 +281,8 @@ These hold everywhere. A change that breaks one is a design change.
   changed parent process as a closed terminal, because then no signal may
   arrive.
 - **Agent parsers never fail.** Invalid JSON, unknown events and unknown fields
-  are ignored.
+  are ignored, and so is a known field with a value of the wrong type
+  (`tests/parser_mutations.rs` mutates every fixture line to check it).
 - **No network.** phasewise itself makes no connections; only the agents do.
 - **Tests never run a real agent**, never use the network and never read the
   global git configuration.

@@ -1557,6 +1557,26 @@ fn existing_phase(state: &RunState, n: u32) -> Result<usize> {
     Ok(n)
 }
 
+/// Whether `file` is in the working tree and neither tracked-and-clean nor
+/// ignored by git: `next` refuses a tree with it, and `retry` and `rollback`
+/// remove it with the other untracked files. `.phasewise/` is the run's own.
+fn in_the_way_of_the_run(git: &Git, file: &Path) -> bool {
+    let (Ok(root), Ok(file)) = (git.root().canonicalize(), file.canonicalize()) else {
+        return false;
+    };
+    let Some(relative) = file
+        .strip_prefix(&root)
+        .ok()
+        .filter(|r| !r.starts_with(".phasewise"))
+    else {
+        return false;
+    };
+    let Some(relative) = relative.to_str() else {
+        return false;
+    };
+    !git.is_ignored(relative).unwrap_or(true)
+}
+
 /// `phasewise report`: the run as Markdown, on stdout or in a file.
 fn report(output: Option<&Path>, force: bool) -> Result<ExitCode> {
     let cwd = current_dir()?;
@@ -1623,6 +1643,14 @@ fn report(output: Option<&Path>, force: bool) -> Result<ExitCode> {
         Some(target) => {
             state::write_atomic(&target, text.as_bytes())?;
             outln!("Report written to {}.", path_in(&cwd, &target).display());
+            if in_the_way_of_the_run(&run.git, &target) {
+                eprintln!(
+                    "Note: {} is inside the repository and git does not ignore it. `phasewise next` \
+stops while it is there, and `retry` and `rollback` delete it. Move it out of the repository, or \
+add it to `.git/info/exclude`.",
+                    path_in(&cwd, &target).display()
+                );
+            }
         }
         None => out!("{text}"),
     }

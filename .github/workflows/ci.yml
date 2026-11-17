@@ -1,13 +1,22 @@
 name: CI
 
 on:
+  # Pull requests are checked by the `pull_request` run. Running on every push
+  # as well doubled the jobs, and the macOS ones queue for a long time.
   push:
+    branches: [main]
   pull_request:
   # The release workflow runs the same checks before it publishes.
   workflow_call:
 
 permissions:
   contents: read
+
+# A new push to a pull request makes the checks of the previous one useless.
+# Every other run (main, the release workflow) has a group of its own.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
