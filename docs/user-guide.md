@@ -519,7 +519,10 @@ all keys · `q` quit. While a plan is being written: `esc` stops it.
 the left and right arrows by 8 columns, `g`/`G` or `Home`/`End` jump to its top
 or bottom (`G` on the log of a running phase follows it again), `/` searches it
 (case-insensitive; an empty search clears it) and `]`/`[` go to the next and
-previous match · `n` approve · `r` retry · `a` accept your fixes of a failed phase · `b` roll back · `f` the whole failure and its logs · `m` merge a
+previous match · `n` approve · `r` retry · `a` accept your fixes of a failed
+phase · `b` roll back · `f` the whole failure and its logs · `d` open the
+phase's changes in `git difftool` (the screen is handed over until you close the
+tool; set one with `diff.tool`, see `git difftool --tool-help`) · `m` merge a
 completed run · `x` interrupt · `A` abandon · `esc` home · `s` settings · `?`
 all keys · `q` quit.
 

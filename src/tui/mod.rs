@@ -25,6 +25,10 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEvent, KeyEventKind,
 };
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 
 use crate::agent::{ModelInfo, agent_for};
 use crate::display::{failure_kind_label, first_line_short, plan_event_line, plan_header};
@@ -621,6 +625,9 @@ struct Ui<'a> {
     clock: Instant,
     last_frame: usize,
     next_reload: Instant,
+    /// A range (`from`, `to`; no `to` is the working tree) the user asked to
+    /// see in `git difftool`: the loop suspends the screen to show it.
+    difftool: Option<(String, Option<String>)>,
 }
 
 impl<'a> Ui<'a> {
@@ -650,6 +657,7 @@ impl<'a> Ui<'a> {
             clock: Instant::now(),
             last_frame: 0,
             next_reload: Instant::now() + HOME_RELOAD_EVERY,
+            difftool: None,
         }
     }
 
@@ -775,8 +783,55 @@ impl<'a> Ui<'a> {
                     _ => {}
                 }
             }
+            if let Some((from, to)) = self.difftool.take() {
+                self.suspend_for_difftool(terminal, &from, to.as_deref())?;
+            }
             self.pump();
         }
+    }
+
+    /// Gives the terminal to `git difftool` and takes it back. The screen is
+    /// always restored, even when the tool fails: the failure is then shown on
+    /// the run screen. The tool runs in a scoped thread while this one keeps
+    /// beating, so the watchdog does not take the wait for a stuck loop.
+    fn suspend_for_difftool(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        from: &str,
+        to: Option<&str>,
+    ) -> Result<()> {
+        let Some(git) = self.run.as_ref().map(|tui| tui.run.git.clone()) else {
+            return Ok(());
+        };
+        let mut out = std::io::stdout();
+        let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+        let result = thread::scope(|scope| {
+            let handle = scope.spawn(|| git.difftool(from, to));
+            while !handle.is_finished() {
+                beat();
+                thread::sleep(POLL);
+            }
+            handle
+                .join()
+                .unwrap_or_else(|_| Err(anyhow!("`git difftool` stopped unexpectedly.")))
+        });
+        beat();
+        enable_raw_mode()?;
+        execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
+        // The tool drew over the screen: clear it and forget what ratatui
+        // thinks is there. `resize` does that without asking the terminal for
+        // the cursor position, as `clear` does, which some never answer.
+        let size = terminal.size()?;
+        terminal.resize(ratatui::layout::Rect::new(0, 0, size.width, size.height))?;
+        if let Some(tui) = &mut self.run {
+            tui.app.message = result
+                .err()
+                .map(|err| Notice::error(format!("Error: {err}")));
+            tui.dirty = true;
+        }
+        self.mark_dirty();
+        Ok(())
     }
 
     /// The background work of every turn, whatever the screen.
@@ -860,6 +915,10 @@ impl<'a> Ui<'a> {
                         Command::Quit => self.quit_now(),
                         Command::Home => self.go_home(),
                         Command::SaveSettings(settings) => self.save_settings(settings),
+                        Command::Difftool(phase) => match tui.difftool_range(phase) {
+                            Ok(range) => self.difftool = Some(range),
+                            Err(why) => tui.app.message = Some(Notice::warn(why)),
+                        },
                         other => tui.execute(other),
                     }
                 }
@@ -1019,11 +1078,32 @@ impl<'a> Tui<'a> {
 }
 
 impl Tui<'_> {
+    /// What `git difftool` must compare for `phase`: the same range as its
+    /// Diff view (see `data::load_diff`), or why there is none.
+    fn difftool_range(&self, phase: usize) -> Result<(String, Option<String>), String> {
+        let state = &self.run.state;
+        let Some(p) = state.phase(phase) else {
+            return Err("This phase does not exist.".to_string());
+        };
+        let Some(from) = state.checkpoint(phase - 1) else {
+            return Err("The previous phase has no checkpoint to compare with.".to_string());
+        };
+        if let Some(to) = state.checkpoint(phase) {
+            return Ok((from.to_string(), Some(to.to_string())));
+        }
+        match p.status {
+            PhaseStatus::Failed | PhaseStatus::Running | PhaseStatus::Verifying => {
+                Ok((from.to_string(), None))
+            }
+            _ => Err(format!("Phase {phase} has no changes to show yet.")),
+        }
+    }
+
     /// Runs a command of the run screen; quitting and going home belong to
     /// the loop.
     fn execute(&mut self, command: Command) {
         match command {
-            Command::Quit | Command::Home | Command::SaveSettings(_) => {}
+            Command::Quit | Command::Home | Command::SaveSettings(_) | Command::Difftool(_) => {}
             Command::Reload => self.refresh(),
             Command::Interrupt => {
                 self.interrupt();

@@ -464,6 +464,33 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
         self.run(&["diff", "--no-color", "--no-ext-diff", from])
     }
 
+    /// Shows the changes from `from` to `to` (the working tree when `to` is
+    /// `None`) in the user's `git difftool`. The tool is interactive, so it
+    /// inherits the terminal and nothing is captured. The tool's exit status is
+    /// trusted: without it git ignores a tool that fails.
+    pub fn difftool(&self, from: &str, to: Option<&str>) -> Result<()> {
+        let mut args = vec!["difftool", "--no-prompt", "--trust-exit-code", from];
+        args.extend(to);
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(&args)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .with_context(|| "Cannot run `git difftool`")?;
+        if status.success() {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "`git difftool` failed ({status}). Configure a tool with `diff.tool` (see \
+`git difftool --tool-help`) and make sure it is installed, or use the Diff view."
+        ))
+    }
+
     /// Per-file added/removed line counts between two commits.
     pub fn numstat(&self, from: &str, to: &str) -> Result<Vec<FileStat>> {
         self.numstat_args(&[from, to])

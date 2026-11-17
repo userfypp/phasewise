@@ -1,6 +1,6 @@
 ---
 source: src/tui/view.rs
-expression: "render(&mut app, 100, 31).backend()"
+expression: "render(&mut app, 100, 32).backend()"
 ---
 " ✻ phasewise · Demo ╭─────────────────────────────────────────────────────────╮ewise/20260101-120000"
 "                    │ Shortcuts                                               │                     "
@@ -9,6 +9,7 @@ expression: "render(&mut app, 100, 31).backend()"
 "   ·  3  Write the d│ j / k        select the next or previous phase          │                     "
 "   ✗  4  Release    │ tab          switch between Diff, Log and Verify        │                     "
 "                    │ f            show the whole failure and its logs        │─────────────────────"
+"                    │ d            show the phase's changes in git difftool   │                     "
 "                    │                                                         │                     "
 "                    │ Run                                                     │                     "
 "                    │ n            approve the phase and run the next one     │                     "

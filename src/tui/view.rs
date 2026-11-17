@@ -880,7 +880,7 @@ pub(super) mod tests {
     fn shortcuts_popup() {
         let mut app = app();
         app.mode = Mode::Help;
-        insta::assert_snapshot!(render(&mut app, 100, 31).backend());
+        insta::assert_snapshot!(render(&mut app, 100, 32).backend());
     }
 
     #[test]
@@ -1090,7 +1090,7 @@ pub(super) mod tests {
     fn the_shortcuts_popup_lists_the_right_panel_keys() {
         let mut app = app();
         app.mode = Mode::Help;
-        let rows: Vec<String> = format!("{}", render(&mut app, 80, 31).backend())
+        let rows: Vec<String> = format!("{}", render(&mut app, 80, 32).backend())
             .lines()
             .map(str::to_string)
             .collect();

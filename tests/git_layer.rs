@@ -319,3 +319,48 @@ fn a_dirty_submodule_and_a_nested_repository_are_told_from_ordinary_changes() {
     );
     assert_eq!(found.len(), 2, "the plain file is not one: {found:?}");
 }
+
+fn configure_fake_difftool(repo: &TestRepo, cmd: &str) {
+    repo.git(&["config", "diff.tool", "fake"]);
+    repo.git(&["config", "difftool.fake.cmd", cmd]);
+}
+
+#[test]
+fn difftool_runs_the_configured_tool_for_the_range() {
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    repo.commit_file("a.txt", "one\n", "add a");
+    let first = git.head_sha().unwrap();
+    repo.commit_file("a.txt", "two\n", "change a");
+    let second = git.head_sha().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let log = out.path().join("seen");
+    configure_fake_difftool(
+        &repo,
+        &format!("cat \"$LOCAL\" \"$REMOTE\" >> '{}'", log.display()),
+    );
+    git.difftool(&first, Some(&second)).unwrap();
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "one\ntwo\n");
+
+    // Without a second revision the working tree is the right-hand side.
+    std::fs::remove_file(&log).unwrap();
+    repo.write("a.txt", "three\n");
+    git.difftool(&first, None).unwrap();
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "one\nthree\n");
+}
+
+#[test]
+fn difftool_failures_say_what_to_do() {
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    repo.commit_file("a.txt", "one\n", "add a");
+    let first = git.head_sha().unwrap();
+    repo.commit_file("a.txt", "two\n", "change a");
+    // git exits 128 when the tool fails (the tool is not installed, say).
+    configure_fake_difftool(&repo, "exit 3");
+    let err = git.difftool(&first, Some("HEAD")).unwrap_err().to_string();
+    assert!(err.contains("`git difftool` failed"), "{err}");
+    assert!(err.contains("128"), "{err}");
+    assert!(err.contains("diff.tool"), "{err}");
+    assert!(err.contains("--tool-help"), "{err}");
+}

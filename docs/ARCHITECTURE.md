@@ -313,6 +313,11 @@ TUI: the run screen when the current run is active, the home screen otherwise.
   repository has a current run, and keeps its worker and caches while the home
   screen is shown. `esc` goes from the run screen to home; `enter` or `o` goes
   back.
+- **The one suspension.** The `d` key of the run screen gives the terminal to
+  `git difftool` (`Git::difftool`, inherited stdio): the loop leaves raw mode
+  and the alternate screen, runs the tool on a scoped thread while it keeps
+  beating for the watchdog, and always enters them again, showing a failure as
+  a notice.
 - **State machines are pure.** `home.rs` and `app.rs` take a key and return a
   command; `mod.rs` carries the command out: it starts a worker thread, calls
   `ops`, or reloads data. This is what makes the screens testable without a

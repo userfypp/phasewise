@@ -83,6 +83,8 @@ pub enum Command {
     SaveSettings(Settings),
     /// Reload the caches of the (newly) selected phase.
     Reload,
+    /// Show the changes of this phase (by number) in `git difftool`.
+    Difftool(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +526,10 @@ impl App {
                 }
                 Some(why) => self.refuse(why),
             },
+            KeyCode::Char('d') => match self.why_not_difftool() {
+                None => self.selected_number().map(Command::Difftool),
+                Some(why) => self.refuse(why),
+            },
             KeyCode::Char('x') => {
                 if self.running.is_some() {
                     self.mode = Mode::ConfirmInterrupt(0);
@@ -645,6 +651,24 @@ impl App {
             .then(|| "Nothing to accept: no phase failed.".to_string())
     }
 
+    /// The phase has changes to show: it has a checkpoint, or it ran and its
+    /// working tree is the change (the same cases as the Diff view).
+    fn why_not_difftool(&self) -> Option<String> {
+        match self.view.phases.get(self.selected) {
+            None => Some("There is no phase to show.".to_string()),
+            Some(p)
+                if !p.has_checkpoint
+                    && !matches!(
+                        p.status,
+                        PhaseStatus::Failed | PhaseStatus::Running | PhaseStatus::Verifying
+                    ) =>
+            {
+                Some(format!("Phase {} has no changes to show yet.", p.number))
+            }
+            Some(_) => None,
+        }
+    }
+
     fn why_not_rollback(&self) -> Option<String> {
         if let Some(why) = self.running_reason() {
             return Some(why);
@@ -725,6 +749,7 @@ impl App {
                     ("j / k", "select the next or previous phase"),
                     ("tab", "switch between Diff, Log and Verify"),
                     ("f", "show the whole failure and its logs"),
+                    ("d", "show the phase's changes in git difftool"),
                 ],
             ),
             (
@@ -829,6 +854,36 @@ mod tests {
         assert_eq!(failed.selected, 1);
         let done = app(vec![phase(1, PhaseStatus::Done, true)]);
         assert_eq!(done.selected, 0);
+    }
+
+    #[test]
+    fn d_asks_for_the_difftool_of_a_phase_with_changes() {
+        let mut a = reviewing();
+        assert_eq!(a.handle_key(key('d')), Some(Command::Difftool(2)));
+        a.handle_key(key('k'));
+        assert_eq!(a.handle_key(key('d')), Some(Command::Difftool(1)));
+        let mut failed = app(vec![
+            phase(1, PhaseStatus::Done, true),
+            phase(2, PhaseStatus::Failed, false),
+        ]);
+        assert_eq!(failed.handle_key(key('d')), Some(Command::Difftool(2)));
+    }
+
+    #[test]
+    fn d_is_refused_with_a_notice_when_there_is_nothing_to_show() {
+        let mut a = reviewing();
+        a.handle_key(key('j'));
+        assert_eq!(a.selected, 2);
+        assert_eq!(a.handle_key(key('d')), None);
+        let notice = a.message.clone().expect("a notice");
+        assert_eq!(notice.level, Level::Warn);
+        assert_eq!(notice.text, "Phase 3 has no changes to show yet.");
+        let mut empty = app(Vec::new());
+        assert_eq!(empty.handle_key(key('d')), None);
+        assert_eq!(
+            empty.message.expect("a notice").text,
+            "There is no phase to show."
+        );
     }
 
     #[test]
