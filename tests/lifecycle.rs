@@ -188,6 +188,28 @@ fn a_run_whose_checkpoint_was_dropped_from_its_branch_cannot_go_on_or_merge() {
 }
 
 #[test]
+fn retry_accepts_a_checkpoint_commit_the_state_never_recorded() {
+    let env = Env::new();
+    env.ok(&["run"], &[]);
+    env.ok(&["next"], &[]);
+    // A kill between phase 2's checkpoint commit and the save of the state:
+    // the commit is on the branch but the phase has no checkpoint.
+    let path = env.state_path();
+    let mut state = env.state();
+    state["phases"][1]["checkpoint_sha"] = Value::Null;
+    state["phases"][1]["status"] = Value::from("verifying");
+    env.repo.write(
+        &path,
+        &serde_json::to_string_pretty(&state).expect("serialize"),
+    );
+    let status = env.ok(&["status"], &[]);
+    assert!(status.stdout.contains("failed"), "{}", status.stdout);
+
+    let retry = env.exec(&["retry"], &[("FAKE_MODE", "success")]);
+    assert_eq!(retry.code, 0, "{}{}", retry.stdout, retry.stderr);
+}
+
+#[test]
 fn a_deleted_run_branch_is_named_and_the_run_can_be_aborted() {
     let env = Env::new();
     env.ok(&["run"], &[]);

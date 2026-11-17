@@ -757,6 +757,20 @@ fn check_no_commits_lost(run: &Run, target: &str) -> Result<()> {
     let mut own: Vec<String> = Vec::new();
     for phase in &run.state.phases {
         let Some(checkpoint) = &phase.checkpoint_sha else {
+            // A crash between the checkpoint commit and the state save leaves
+            // the commit without a record of it: it is still phasewise's own,
+            // told by the trailers of its message.
+            if let Some(start) = &phase.start_sha {
+                let trailers = [
+                    format!("Phasewise-Run: {}", run.state.run_id),
+                    format!("Phasewise-Phase: {}", phase.number),
+                ];
+                own.extend(
+                    run.git
+                        .commits_with_lines(start, "HEAD", &trailers)
+                        .unwrap_or_default(),
+                );
+            }
             continue;
         };
         own.push(checkpoint.clone());

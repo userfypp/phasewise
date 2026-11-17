@@ -388,3 +388,30 @@ fn switch_does_not_bring_back_a_branch_from_its_remote_copy() {
             .unwrap()
     );
 }
+
+#[test]
+fn commits_with_lines_finds_only_the_commits_that_carry_every_line() {
+    let repo = TestRepo::new();
+    let git = git_for(&repo);
+    let base = git.head_sha().unwrap();
+    repo.write("a.txt", "1\n");
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "ours\n\nTag-A: x\nTag-B: 2\n"]);
+    let ours = git.head_sha().unwrap();
+    repo.commit_file("b.txt", "2\n", "theirs\n\nTag-A: x\n");
+    let both = ["Tag-A: x".to_string(), "Tag-B: 2".to_string()];
+    assert_eq!(
+        git.commits_with_lines(&base, "HEAD", &both).unwrap(),
+        [ours]
+    );
+    assert!(
+        git.commits_with_lines(&base, "HEAD", &[])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        git.commits_with_lines("HEAD", &base, &both)
+            .unwrap()
+            .is_empty()
+    );
+}

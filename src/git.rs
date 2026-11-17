@@ -396,6 +396,34 @@ Set it with `git config user.name \"Your Name\"` and `git config user.email you@
             .to_string())
     }
 
+    /// The commits after `from` up to `to` whose message contains every one of
+    /// `lines` (phasewise's own trailers), newest first. None when `from` is
+    /// not an ancestor of `to`.
+    pub fn commits_with_lines(
+        &self,
+        from: &str,
+        to: &str,
+        lines: &[String],
+    ) -> Result<Vec<String>> {
+        if lines.is_empty() || self.commits_between(from, to)?.is_empty() {
+            return Ok(Vec::new());
+        }
+        let range = format!("{from}..{to}");
+        let mut args: Vec<String> = ["log", "--format=%H", "--fixed-strings", "--all-match"]
+            .map(String::from)
+            .to_vec();
+        args.extend(lines.iter().map(|l| format!("--grep={l}")));
+        args.push(range);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        Ok(self
+            .run(&args)?
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
     /// The commits after `from` up to and including `to`, newest first; none
     /// when `from` is not an ancestor of `to`.
     pub fn commits_between(&self, from: &str, to: &str) -> Result<Vec<String>> {
