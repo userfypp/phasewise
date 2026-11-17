@@ -155,6 +155,56 @@ fn report_summarizes_the_run_on_stdout_and_in_a_file() {
 }
 
 #[test]
+fn next_names_a_submodule_or_a_nested_repository_that_it_cannot_clean() {
+    let env = Env::new();
+    let lib = TestRepo::new();
+    let url = lib.path().to_str().expect("utf-8 path").to_string();
+    env.repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        &url,
+        "libs",
+    ]);
+    env.repo.commit_all("add the submodule");
+    env.ok(&["run"], &[]);
+
+    // The phase left a change inside the submodule: `rollback` does not clear
+    // it, so the advice must not be to roll back.
+    env.repo.write("libs/README.md", "changed inside\n");
+    let next = env.exec(&["next"], &[]);
+    assert_eq!(next.code, 1, "{}", next.stderr);
+    assert!(
+        next.stderr
+            .contains("`libs` is a submodule with changes inside it"),
+        "{}",
+        next.stderr
+    );
+    assert!(
+        next.stderr.contains("git -C libs status"),
+        "{}",
+        next.stderr
+    );
+    env.repo.git(&["-C", "libs", "checkout", "--", "README.md"]);
+    env.ok(&["next"], &[]);
+
+    // A repository inside the tree that the outer one does not track.
+    env.repo.git(&["-C", ".", "init", "-q", "tools/x"]);
+    env.repo.write("tools/x/f.txt", "f\n");
+    let next = env.exec(&["next"], &[]);
+    assert_eq!(next.code, 1, "{}", next.stderr);
+    assert!(
+        next.stderr
+            .contains("`tools/x/` is a git repository inside this one"),
+        "{}",
+        next.stderr
+    );
+    assert!(next.stderr.contains(".git/info/exclude"), "{}", next.stderr);
+}
+
+#[test]
 fn report_says_nothing_about_a_file_that_cannot_get_in_the_way() {
     let env = Env::new();
     env.ok(&["run"], &[]);

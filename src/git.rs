@@ -9,6 +9,15 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 
+/// A dirty path that is a repository of its own, see [`Git::embedded_repos`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Embedded {
+    /// A submodule with changes inside it or a new commit.
+    Submodule(String),
+    /// A repository inside the tree that this one does not track.
+    Nested(String),
+}
+
 /// A git repository, identified by its top-level directory.
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -185,6 +194,57 @@ impl Git {
             }
         }
         Ok(paths)
+    }
+
+    /// Dirty paths that are a repository of their own: git cannot commit or
+    /// discard what changed inside them as part of this one.
+    pub fn embedded_repos(&self) -> Result<Vec<Embedded>> {
+        let out = self.run(&["status", "--porcelain=v2", "-z", "--untracked-files=all"])?;
+        let mut found = Vec::new();
+        let mut entries = out.split('\0').filter(|e| !e.is_empty());
+        while let Some(entry) = entries.next() {
+            match entry.as_bytes().first() {
+                // `1 XY sub mH mI mW hH hI path`; a submodule's `sub` starts with `S`.
+                Some(b'1') => {
+                    let mut fields = entry.splitn(9, ' ');
+                    if let (Some(sub), Some(path)) = (fields.nth(2), fields.nth(5))
+                        && sub.starts_with('S')
+                    {
+                        found.push(Embedded::Submodule(path.to_string()));
+                    }
+                }
+                // Renames carry a score and are followed by the original path.
+                Some(b'2') => {
+                    entries.next();
+                }
+                // A repository nested in the tree is listed as a directory.
+                Some(b'?') => {
+                    if let Some(path) = entry.get(2..).and_then(|p| p.strip_suffix('/')) {
+                        found.push(Embedded::Nested(path.to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(found)
+    }
+
+    /// What to do about a dirty path that is a repository of its own, which
+    /// phasewise can neither commit nor discard (`rollback` leaves it alone),
+    /// ready to follow an error message. Empty when there is none.
+    pub fn embedded_repo_advice(&self) -> String {
+        match self.embedded_repos().unwrap_or_default().first() {
+            Some(Embedded::Submodule(path)) => format!(
+                " `{path}` is a submodule with changes inside it, which phasewise cannot commit \
+or discard: commit or discard them inside it (`git -C {path} status`), and if you commit them \
+there, commit the updated `{path}` in this repository too. Then run this again."
+            ),
+            Some(Embedded::Nested(path)) => format!(
+                " `{path}/` is a git repository inside this one, which phasewise cannot commit or \
+discard: move it out of the repository or add it to `.git/info/exclude`, then run this again."
+            ),
+            None => String::new(),
+        }
     }
 
     pub fn is_clean(&self) -> Result<bool> {

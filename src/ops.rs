@@ -272,8 +272,9 @@ fn check_repository(git: &Git) -> Result<()> {
             listed.push(format!("  ... and {} more", dirty.len() - MAX_DIRTY_LISTED));
         }
         bail!(
-            "The working tree has uncommitted changes:\n{}\nCommit or stash them, then run phasewise again.",
-            listed.join("\n")
+            "The working tree has uncommitted changes:\n{}\nCommit or stash them, then run phasewise again.{}",
+            listed.join("\n"),
+            git.embedded_repo_advice()
         );
     }
     Ok(())
@@ -688,8 +689,9 @@ fn check_can_advance(run: &Run) -> Result<()> {
     if !dirty.is_empty() {
         bail!(
             "The working tree has uncommitted changes (e.g. {}). Commit or stash them, \
-or run `phasewise rollback` to discard them.",
-            dirty[0]
+or run `phasewise rollback` to discard them.{}",
+            dirty[0],
+            run.git.embedded_repo_advice()
         );
     }
     Ok(())
@@ -971,8 +973,9 @@ pub fn prepare_merge(run: &Run) -> Result<()> {
         };
         bail!(
             "The working tree has uncommitted changes ({}{more}). Commit or stash them \
-(`git stash -u`), then run the merge again.",
-            listed.join(", ")
+(`git stash -u`), then run the merge again.{}",
+            listed.join(", "),
+            run.git.embedded_repo_advice()
         );
     }
     Ok(())

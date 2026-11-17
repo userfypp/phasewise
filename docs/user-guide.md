@@ -468,6 +468,11 @@ Environment variables:
 
 - **"The working tree has uncommitted changes"**: commit or stash them; a run
   must start from a clean tree. On the home screen, `c` commits the plan file.
+  When the change is inside a submodule, or in a git repository nested in your
+  project, phasewise cannot commit or discard it: the message names the path.
+  Commit or discard the change inside that repository (and commit the updated
+  submodule in yours), or add a nested repository to `.git/info/exclude`.
+  `retry` and `rollback` leave such changes alone.
 - **A phase failed**: read the Log and Verify views, then `r` to retry with a
   note. `phasewise status` shows the full failure message. A retry starts again
   from the checkpoint before the phase and discards everything uncommitted,

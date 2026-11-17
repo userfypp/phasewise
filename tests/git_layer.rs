@@ -1,7 +1,7 @@
 mod common;
 
 use common::TestRepo;
-use phasewise::git::{Git, checkpoint_message};
+use phasewise::git::{Embedded, Git, checkpoint_message};
 
 fn git_for(repo: &TestRepo) -> Git {
     repo.git_handle()
@@ -273,4 +273,49 @@ fn checkpoint_message_format() {
         checkpoint_message("20260101-000000-abcd", 3, "Add API"),
         "phasewise: phase 3 — Add API\n\nPhasewise-Run: 20260101-000000-abcd\nPhasewise-Phase: 3\n"
     );
+}
+
+/// A repository with one commit, to be a submodule or a nested repository.
+fn other_repo() -> TestRepo {
+    TestRepo::new()
+}
+
+#[test]
+fn a_dirty_submodule_and_a_nested_repository_are_told_from_ordinary_changes() {
+    let repo = TestRepo::new();
+    let lib = other_repo();
+    let url = lib.path().to_str().expect("utf-8 path").to_string();
+    repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        &url,
+        "libs",
+    ]);
+    repo.commit_all("add the submodule");
+    let git = git_for(&repo);
+    assert_eq!(git.embedded_repos().unwrap(), []);
+
+    // Changes inside the submodule show as one dirty path of the outer repository.
+    repo.write("libs/README.md", "changed inside\n");
+    repo.git(&["-C", "libs", "add", "README.md"]);
+    // A nested repository that the outer one does not track, and a plain file.
+    let nested = repo.path().join("tools").join("x");
+    std::fs::create_dir_all(&nested).expect("create nested dir");
+    repo.git(&["-C", "tools/x", "init", "-q"]);
+    repo.write("tools/x/f.txt", "f\n");
+    repo.write("plain.txt", "plain\n");
+
+    let found = git.embedded_repos().unwrap();
+    assert!(
+        found.contains(&Embedded::Submodule("libs".into())),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&Embedded::Nested("tools/x".into())),
+        "{found:?}"
+    );
+    assert_eq!(found.len(), 2, "the plain file is not one: {found:?}");
 }
