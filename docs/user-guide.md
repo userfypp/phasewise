@@ -25,9 +25,10 @@ cargo install --path .
 Then run `phasewise doctor` inside your project. It checks git, both agents
 (installed, version and whether they are logged in) and whether the repository
 is ready (a first commit, a branch checked out, a clean working tree, a valid
-plan). It exits `1` when git, both agents or any repository check fails. A login
-that is not confirmed, or a plan whose own agent is not installed (`run --agent`
-can override it), is a warning, not an error.
+plan). It exits `1` when git is missing, neither agent is installed, a phase that
+sets its own `agent` names one that is not installed, or a repository check
+fails. A login that is not confirmed, or a plan whose default agent is not
+installed (`run --agent` can override it), is a warning, not an error.
 
 ## How it works
 
@@ -234,7 +235,11 @@ time, cost and changed files, `-` where unknown, plus the agent when the plan
 mixes agents), the plan's checks and the totals. It uses only what the run
 stored, so the same run gives the same text. The numbers are those of
 `phasewise status`. `--output report.md` writes the file instead (atomically);
-it refuses to overwrite an existing file unless you pass `--force`.
+it refuses to overwrite an existing file unless you pass `--force`. A file
+inside the repository that git does not ignore stops `phasewise next` (the
+working tree is no longer clean) and is deleted by `retry` and `rollback`, so
+`report` says so; write it outside the repository, or list it in
+`.git/info/exclude`.
 
 ```markdown
 # Add the report command
