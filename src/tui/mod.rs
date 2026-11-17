@@ -120,6 +120,16 @@ fn join_beating<T>(handle: JoinHandle<T>) -> thread::Result<T> {
 }
 
 /// While stopping, Ctrl-C or `q` again forces the exit.
+/// A key pressed while the terminal is too small to draw anything but the
+/// "enlarge the window" message. Everything but Ctrl-C is dropped: a popup or
+/// a question that cannot be seen must not be answered.
+fn is_blind_key(width: u16, height: u16, key: KeyEvent) -> bool {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    let too_small = width < widgets::MIN_WIDTH || height < widgets::MIN_HEIGHT;
+    let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+    too_small && !ctrl_c
+}
+
 fn is_force_key(key: KeyEvent) -> bool {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     match key.code {
@@ -770,7 +780,10 @@ impl<'a> Ui<'a> {
                 match event::read()? {
                     Event::Key(key) if key.kind != KeyEventKind::Release => {
                         if !self.quitting {
-                            self.on_key(key);
+                            let size = terminal.size()?;
+                            if !is_blind_key(size.width, size.height, key) {
+                                self.on_key(key);
+                            }
                         } else if is_force_key(key) {
                             // A worker that never stops must not trap the user:
                             // do what a second signal does.
@@ -1571,6 +1584,23 @@ mod tests {
         assert!(is_force_key(key('q', KeyModifiers::NONE)));
         assert!(!is_force_key(key('c', KeyModifiers::NONE)));
         assert!(!is_force_key(key('x', KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn a_terminal_that_is_too_small_drops_every_key_but_ctrl_c() {
+        use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+        let key = |c, m| KeyEvent::new(KeyCode::Char(c), m);
+        let (w, h) = (widgets::MIN_WIDTH, widgets::MIN_HEIGHT);
+        for (width, height) in [(w - 1, h), (w, h - 1), (60, 12)] {
+            assert!(is_blind_key(width, height, key('A', KeyModifiers::SHIFT)));
+            assert!(is_blind_key(width, height, key('y', KeyModifiers::NONE)));
+            assert!(!is_blind_key(
+                width,
+                height,
+                key('c', KeyModifiers::CONTROL)
+            ));
+        }
+        assert!(!is_blind_key(w, h, key('A', KeyModifiers::SHIFT)));
     }
 
     /// A repository with a plan and a started run, made without any agent. The
