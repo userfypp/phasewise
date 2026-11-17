@@ -344,7 +344,21 @@ or commit it yourself with `git add -f {}`.",
             plan_path.display()
         );
     }
-    git.commit_file(&relative, "Add phasewise plan")
+    let sha = git.commit_file(&relative, "Add phasewise plan")?;
+    // A hook that rewrites the file after it was staged (a formatter that does
+    // not `git add`) leaves the plan changed again: the run would be refused
+    // for a dirty tree, so say so now.
+    if git.dirty_paths()?.contains(&relative) {
+        bail!(
+            "Committed {} as {sha}, but a git hook changed it afterwards, so it is not clean. \
+Review the change and commit it with `git add {} && git commit`, or discard it with \
+`git checkout -- {}`.",
+            plan_path.display(),
+            plan_path.display(),
+            plan_path.display()
+        );
+    }
+    Ok(sha)
 }
 
 /// Fails when `branch` is the branch of a phasewise run: plans are committed

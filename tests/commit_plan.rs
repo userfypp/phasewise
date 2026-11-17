@@ -157,6 +157,21 @@ fn a_failing_hook_reports_its_output() {
     assert!(err.contains("hook says no"), "{err}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_hook_that_changes_the_plan_after_staging_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new();
+    repo.write("phasewise.md", PLAN);
+    let hook = repo.path().join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().expect("parent")).expect("hooks dir");
+    std::fs::write(&hook, "#!/bin/sh\necho '<!-- fmt -->' >> phasewise.md\n").expect("hook");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let err = error(&repo, "phasewise.md");
+    assert!(err.contains("a git hook changed it afterwards"), "{err}");
+    assert!(err.contains("git add phasewise.md"), "{err}");
+}
+
 #[test]
 fn start_refuses_a_run_branch() {
     let repo = TestRepo::new();
