@@ -205,7 +205,7 @@ nothing else).
 `state.json` holds the run (`run_id`, plan path and title, agent, original
 branch, run branch, `base_sha`, status `active`, `completed` or `aborted`,
 timestamps, model and effort overrides) and one entry per phase: status,
-attempts, session id, checkpoint SHA, the agent's final message (at most 2000
+attempts, session id, `start_sha` (the `HEAD` when it started), checkpoint SHA, the agent's final message (at most 2000
 characters), cost, start and end times, the failure (`kind` and `detail`), the
 model and effort requested, and the model the agent reported. New fields are
 optional, so older files keep loading; `schema_version` stays 1.
@@ -247,10 +247,15 @@ These hold everywhere. A change that breaks one is a design change.
   `--literal-pathspecs`, so a plan named `a*.md` or `plan[v2].md` is not a
   pattern that also stages and commits its neighbours.
 - **`retry` and `rollback` never drop a commit that is only on the run
-  branch and is not a checkpoint.** Before `git reset --hard`,
+  branch and is not the run's own.** Before `git reset --hard`,
   `Git::commits_that_would_be_lost` lists the commits between the target and
-  `HEAD`, minus the run's checkpoints and minus those reachable from another
-  ref; if any remain, the operation refuses before changing anything.
+  `HEAD`, minus the run's own and minus those reachable from another ref; if
+  any remain, the operation refuses before changing anything. The run's own
+  are the checkpoints and, for each phase with a checkpoint, the commits from
+  its `start_sha` (the `HEAD` when it started) to that checkpoint: the ones the
+  agent made inside the phase. A commit the user makes between phases is
+  before the next `start_sha`, so it stays protected. A failed phase has no
+  checkpoint, so commits the agent made in it count as the user's.
 - **`git clean` never touches `.phasewise/`**: it runs with
   `-e /.phasewise/`, and the directory is also excluded.
 - **State is written atomically:** a temporary file in the same directory,

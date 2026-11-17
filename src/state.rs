@@ -62,6 +62,12 @@ pub struct PhaseState {
     pub attempts: u32,
     pub session_id: Option<String>,
     pub checkpoint_sha: Option<String>,
+    /// `HEAD` when the phase started. The commits from here to the checkpoint
+    /// are the phase's own (the agent's commits and the checkpoint), which
+    /// `retry` and `rollback` may drop; anything else on the run branch is
+    /// somebody's work. Absent in runs started by an older version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_sha: Option<String>,
     /// The agent's final message, at most 2000 characters.
     pub summary: Option<String>,
     pub cost_usd: Option<f64>,
@@ -359,6 +365,7 @@ impl RunState {
                     attempts: 0,
                     session_id: None,
                     checkpoint_sha: None,
+                    start_sha: None,
                     summary: None,
                     cost_usd: None,
                     started_at: None,
