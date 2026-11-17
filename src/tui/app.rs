@@ -220,7 +220,18 @@ impl App {
         if !self.accepts_text() {
             return;
         }
-        for key in paste_keys(text) {
+        let keys = paste_keys(text);
+        // A plain text takes the whole paste at once: key by key, every
+        // character would clone the buffer (`handle_key` matches on a copy of
+        // the mode), which makes a large paste quadratic.
+        if let Mode::Note(buffer) | Mode::Until(buffer) | Mode::Search(buffer) = &mut self.mode {
+            self.message = None;
+            for key in keys {
+                edit_text(buffer, key);
+            }
+            return;
+        }
+        for key in keys {
             // Typing a character into a text never yields a command.
             let _ = self.handle_key(key);
         }

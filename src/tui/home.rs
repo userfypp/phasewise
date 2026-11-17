@@ -449,7 +449,18 @@ impl Home {
         if !self.accepts_text() {
             return;
         }
-        for key in paste_keys(text) {
+        let keys = paste_keys(text);
+        // A plain text takes the whole paste at once: key by key, every
+        // character would clone the buffer (`handle_key` matches on a copy of
+        // the mode), which makes a large paste quadratic.
+        if let Mode::GoalInput(buffer) | Mode::ModelInput(buffer) = &mut self.mode {
+            self.message = None;
+            for key in keys {
+                edit_text(buffer, key);
+            }
+            return;
+        }
+        for key in keys {
             // Typing a character into a text never yields a command.
             let _ = self.handle_key(key);
         }
@@ -2122,5 +2133,19 @@ mod tests {
         let h = Home::with_settings(data(PlanState::Missing), Settings::default());
         assert_eq!(h.agent, AgentKind::Claude);
         assert_eq!((h.model, h.effort), (None, None));
+    }
+
+    #[test]
+    fn a_large_paste_is_typed_in_linear_time() {
+        let mut h = Home::new(data(PlanState::Missing));
+        h.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        let start = std::time::Instant::now();
+        h.handle_paste(&"x".repeat(1_000_000));
+        // Quadratic took many seconds in a debug build; this takes milliseconds.
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        match &h.mode {
+            Mode::GoalInput(buffer) => assert_eq!(buffer.len(), 1_000_000),
+            other => panic!("unexpected mode {other:?}"),
+        }
     }
 }
