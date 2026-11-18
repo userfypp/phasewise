@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file. From version
 the merged pull requests. The project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/userfypp/phasewise/compare/v0.3.0...v0.3.1) (2026-11-18)
+
+
+### Fixed
+
+* **engine:** cap the agent's stdout and stderr logs at 64 MiB ([#207](https://github.com/userfypp/phasewise/issues/207)) ([de00c1e](https://github.com/userfypp/phasewise/commit/de00c1ee8bdbdb4ee4bfc6f97a3e17ba2e6965f5))
+* **plan:** reject control characters in titles, near-miss fences, misplaced front matter and empty checks ([#206](https://github.com/userfypp/phasewise/issues/206)) ([25afa7d](https://github.com/userfypp/phasewise/commit/25afa7d3a3cc977367cfd1c8e125ae20343490bb))
+* **tui:** drop every key but Ctrl-C while the terminal is too small ([#187](https://github.com/userfypp/phasewise/issues/187)) ([57c5a44](https://github.com/userfypp/phasewise/commit/57c5a44d6f6c58dd147a9256f18f777067d0ad8d))
+
+
+### Documentation
+
+* explain scripting and CI with phasewise ([#208](https://github.com/userfypp/phasewise/issues/208)) ([9323080](https://github.com/userfypp/phasewise/commit/932308019b2846069471efcd8dc85602c23d8279))
+
 ## [0.3.0](https://github.com/userfypp/phasewise/compare/v0.2.0...v0.3.0) (2026-11-17)
 
 
