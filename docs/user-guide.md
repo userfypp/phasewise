@@ -367,8 +367,119 @@ the run's agent: `run`, `next` and `retry` refuse it for a phase of the other
 agent. `run --agent` with an agent other than the plan's makes every phase use
 it; naming the plan's own agent changes nothing, so its phase blocks still apply.
 
-Exit codes: `0` success, `1` usage or environment error, `3` a phase ended
-failed, `130` stopped by a second Ctrl-C.
+See [Scripts and CI](#scripts-and-ci) for exit codes and machine-readable status.
+
+## Scripts and CI
+
+### Machine-readable status
+
+`phasewise status --json` writes a JSON object to stdout. It writes the JSON
+value `null` when there is no run. Errors and recovery messages go to stderr.
+Fields without a value inside an existing run are present as `null`.
+
+#### Run fields
+
+| Field | Meaning |
+|---|---|
+| `run_id` | Identifier of the run. |
+| `status` | `active`, `completed` or `aborted`. |
+| `plan_title` | Title of the plan, if it has one. |
+| `agent` | Default agent for the run, `claude` or `codex`. |
+| `original_branch` | Branch the run started from. |
+| `run_branch` | Branch that holds the run's checkpoints. |
+| `cost_usd` | Total reported cost in US dollars, when available. |
+| `duration_secs` | Total duration of the finished phases in seconds, when available. |
+| `max_cost_usd` | Configured spending limit in US dollars, when set. |
+| `limits` | Array of the last reported usage windows, when available and enabled. |
+| `limits_seen_at` | Unix timestamp in seconds when those windows were reported. |
+| `phases` | Array of phase objects in plan order. |
+
+#### Phase fields
+
+| Field | Meaning |
+|---|---|
+| `number` | Phase number in the plan. |
+| `title` | Phase title. |
+| `status` | `pending`, `running`, `verifying`, `awaiting_review`, `done` or `failed`. |
+| `attempts` | Number of attempts made for the phase. |
+| `cost_usd` | Reported cost of the phase in US dollars, when available. |
+| `duration_secs` | Duration of the last attempt, including elapsed time while it is active. |
+| `agent` | Agent selected for the phase. |
+| `model` | Reported model, or the selected model if the agent did not report one. |
+| `effort` | Selected reasoning effort, when set. |
+| `checkpoint_sha` | Git commit ID of the phase checkpoint, when created. |
+| `failure` | Object with `kind` and `detail`, or `null`. |
+
+Failure kinds are `agent_error`, `verify_failed`, `timeout`, `interrupted`
+and `checkpoint_failed`. `detail` is a human-readable explanation.
+Each usage window contains its `name`, `utilization` as a fraction, `resets_at`
+as a Unix timestamp in seconds, and `status` as reported by the agent.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success, including a normal stop for review. |
+| `1` | Usage, configuration or environment error. |
+| `3` | A phase ended failed. |
+| `130` | A second Ctrl-C forced the process to stop. |
+
+`run --auto` stops on the first failed phase or when the last phase awaits
+review. A zero exit code can therefore have an `active` run with a phase in
+`awaiting_review`. Check `status --json` for the run and phase states.
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `PHASEWISE_CLAUDE_BIN`, `PHASEWISE_CODEX_BIN` | Paths to the agent executables if they are outside `PATH`. |
+| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides the timeout for every phase, including a phase's own (1 to 31536000 seconds). |
+| `PHASEWISE_MAX_COST_USD` | Overrides the plan's spending limit. Claude Code reports cost. |
+| `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for the separate `plan` command (default 1200, 1 to 31536000 seconds). |
+| `PHASEWISE_CONFIG_DIR` | Directory of the [settings file](#settings). Defaults to `$XDG_CONFIG_HOME/phasewise` or `~/.config/phasewise`. |
+| `NO_COLOR` | Turns off colour in the CLI and screens. Bold and dim still apply. |
+
+### GitHub Actions example
+
+This manual workflow runs a trusted plan in a clean checkout. Add the
+installation and authentication for the [agent named by the plan](agents.md)
+before the validation step, and install your project's build and check tools.
+Keep agent credentials in the runner's secret configuration.
+
+```yaml
+name: Run a phasewise plan
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  phasewise:
+    runs-on: ubuntu-latest
+    env:
+      PHASEWISE_CONFIG_DIR: ${{ runner.temp }}/phasewise-config
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install phasewise and set a local Git identity
+        run: |
+          cargo install phasewise --locked --version 0.3.0
+          git config user.name "phasewise CI"
+          git config user.email "phasewise-ci@example.invalid"
+      # Set up and authenticate the plan's agent here.
+      - run: phasewise check
+      - name: Run the plan on the runner's local branch
+        run: phasewise run --auto
+      - name: Report the run
+        if: ${{ always() }}
+        run: |
+          if [ -s .phasewise/current ]; then
+            phasewise report >> "$GITHUB_STEP_SUMMARY"
+          fi
+```
+
+The report step runs even when a phase fails, and the earlier failure still
+marks the job as failed. The run branch and its checkpoint commits stay on the
+runner. Review any work before merging it.
 
 ## Shell completions
 
@@ -465,16 +576,7 @@ not affected.
 You can delete `.phasewise/` when no run is in progress. Your [user
 settings](#settings) live elsewhere, in your configuration directory.
 
-Environment variables:
-
-| Variable | Effect |
-|---|---|
-| `PHASEWISE_CLAUDE_BIN`, `PHASEWISE_CODEX_BIN` | Use another binary for the agent. |
-| `PHASEWISE_PHASE_TIMEOUT_SECONDS` | Overrides `phase_timeout_minutes` for every phase, including a phase's own (1 to 31536000). |
-| `PHASEWISE_MAX_COST_USD` | Overrides `max_cost_usd` (the run's spending limit). |
-| `PHASEWISE_PLAN_TIMEOUT_SECONDS` | Time limit for writing a plan (default 1200, 1 to 31536000). |
-| `NO_COLOR` | Turns off colour in command output and in the screens (bold and dim stay). |
-| `PHASEWISE_CONFIG_DIR` | Directory of the [settings file](#settings) (default `$XDG_CONFIG_HOME/phasewise`, else `~/.config/phasewise`). |
+See [Environment variables](#environment-variables) for per-process overrides.
 
 ## When something goes wrong
 

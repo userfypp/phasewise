@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use common::TestRepo;
@@ -299,12 +300,14 @@ fn status_json_describes_the_run() {
     env.ok(&["run"], &[]);
     let out = env.ok(&["status", "--json"], &[]);
     let value: Value = serde_json::from_str(&out.stdout).expect("valid JSON");
+    assert_status_fields_documented("#### Run fields", &value);
     assert_eq!(value["status"], "active");
     assert_eq!(value["agent"], "claude");
     assert_eq!(value["max_cost_usd"], 5.0);
     assert_eq!(value["cost_usd"], 0.01);
     let phases = value["phases"].as_array().expect("phases");
     assert_eq!(phases.len(), 3);
+    assert_status_fields_documented("#### Phase fields", &phases[0]);
     assert_eq!(phases[0]["status"], "awaiting_review");
     assert_eq!(phases[0]["title"], "First");
     assert_eq!(phases[0]["attempts"], 1);
@@ -315,6 +318,26 @@ fn status_json_describes_the_run() {
     assert!(phases[0]["duration_secs"].is_u64());
     assert_eq!(phases[1]["duration_secs"], Value::Null);
     assert!(value["duration_secs"].is_u64());
+}
+
+fn assert_status_fields_documented(heading: &str, value: &Value) {
+    let (_, section) = include_str!("../docs/user-guide.md")
+        .split_once(heading)
+        .expect("status fields heading");
+    let documented = section
+        .lines()
+        .skip_while(|line| !line.starts_with("| Field |"))
+        .skip(2)
+        .map_while(|line| line.strip_prefix("| `"))
+        .map(|line| line.split_once('`').expect("documented field name").0)
+        .collect::<BTreeSet<_>>();
+    let actual = value
+        .as_object()
+        .expect("status object")
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(documented, actual, "{heading}");
 }
 
 #[test]
