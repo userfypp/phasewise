@@ -52,6 +52,14 @@ labels and its group when it is triaged. Closed issues stay in their group, so
 a group also shows what was done. Do not open a new group for one issue: if
 nothing fits, say so in the issue and the maintainer decides.
 
+### Where to start
+
+- [`good first issue`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22): one module, a clear symptom, and an existing test that shows where a new one goes. Start here.
+- [`help wanted`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22): well specified, no rush on the maintainer's side; a bit more to read first.
+- Anything else, including `type: design`: open a comment before you start, because the answer is not settled yet.
+
+Comment on the issue you pick so nobody else starts it; a maintainer assigns it. Read [AGENTS.md](AGENTS.md#rules) for the code rules and run the quality gate before opening a pull request.
+
 Report vulnerabilities privately, as described in the
 [security policy](SECURITY.md), never in a public issue.
 
