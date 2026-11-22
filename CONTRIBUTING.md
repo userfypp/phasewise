@@ -26,6 +26,32 @@ agent. `status: needs info` and `status: blocked` say what an issue is waiting
 for. The type labels match the Conventional Commit types of pull request
 titles. Issues with `good first issue` or `help wanted` are open to anyone.
 
+### Groups
+
+Every issue belongs to exactly one group: an `epic` issue that holds it as a
+sub-issue, so GitHub shows the progress of each group. There are eight, one per
+area of the code (plus one for what goes beyond a single agent). A group is
+long-lived and general; it is never closed because its issues are done, since
+new ones keep arriving.
+
+| Group | Holds | Label |
+|---|---|---|
+| [#86 Run safety: git, state and recovery](https://github.com/userfypp/phasewise/issues/86) | branch and checkpoints, `retry`, `rollback`, `abort`, `merge`, `state.json`, the lock, recovery | `area: git`, `area: state` |
+| [#84 Plan format, validation and settings](https://github.com/userfypp/phasewise/issues/84) | parsing and checking plans, drafted plans, settings file, examples | `area: plan` |
+| [#83 Terminal UI](https://github.com/userfypp/phasewise/issues/83) | home and run screens, keys, popups, TUI tests | `area: tui` |
+| [#59 Agents and output fidelity](https://github.com/userfypp/phasewise/issues/59) | Claude Code and Codex command lines and parsers, fixtures, what reaches the terminal | `area: agents` |
+| [#57 Engine: checks, limits and spending](https://github.com/userfypp/phasewise/issues/57) | the phase cycle, checks and their output, timeouts, cost and usage limits | `area: engine` |
+| [#60 CLI, scripts and integrations](https://github.com/userfypp/phasewise/issues/60) | commands, flags, exit codes, error messages, `--json`, completions, `doctor` | `area: cli` |
+| [#61 Beyond one agent](https://github.com/userfypp/phasewise/issues/61) | mixed plans, other agents, parallel phases | `area: engine`, `area: agents` |
+| [#62 Distribution and project health](https://github.com/userfypp/phasewise/issues/62) | binaries, packaging, platforms, release tooling, CI checks | `area: release` |
+
+Pick the group by what the change touches, not by its type: a TUI bug goes to
+#83 even if it is about git output. When two groups fit, take the one whose
+code has to change; mention the other in the issue. A new issue gets its
+labels and its group when it is triaged. Closed issues stay in their group, so
+a group also shows what was done. Do not open a new group for one issue: if
+nothing fits, say so in the issue and the maintainer decides.
+
 Report vulnerabilities privately, as described in the
 [security policy](SECURITY.md), never in a public issue.
 
