@@ -197,6 +197,8 @@ impl Settings {
             (Kind::Bool, toml::Value::Boolean(b)) => {
                 Ok(Some(if *b { "on" } else { "off" }.to_string()))
             }
+            // The guide lists `on` and `off`, so the file accepts them as text too.
+            (Kind::Bool, toml::Value::String(s)) if s == "on" || s == "off" => Ok(Some(s.clone())),
             (Kind::Choice(values), toml::Value::String(s)) if values.contains(&s.as_str()) => {
                 Ok(Some(s.clone()))
             }
@@ -593,6 +595,22 @@ mod tests {
         assert!(loaded.warnings[0].contains("`limits`"));
         assert!(loaded.settings.limits());
         assert!(loaded.settings.color_never());
+    }
+
+    #[test]
+    fn a_bool_setting_accepts_on_and_off_as_text_in_the_file() {
+        let dir = temp();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(&path, "bell = \"on\"\nlimits = \"off\"\n").expect("write");
+        let loaded = load_from(&path);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.settings.get("bell"), "on");
+        assert!(!loaded.settings.limits());
+        // Other text is still invalid and falls back to the default.
+        std::fs::write(&path, "bell = \"yes\"\n").expect("write");
+        let loaded = load_from(&path);
+        assert_eq!(loaded.warnings.len(), 1);
+        assert_eq!(loaded.settings.get("bell"), "off");
     }
 
     #[test]

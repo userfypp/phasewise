@@ -524,7 +524,8 @@ directory, and it is written only when you change a setting. A missing file
 means the defaults. A file that cannot be read or is not valid TOML is
 ignored with a warning (the defaults apply); the next time you change a
 setting the old file is kept as `settings.toml.bak` before it is replaced.
-Keys phasewise does not know are left alone.
+Keys phasewise does not know are left alone. In the file an `on`/`off` setting
+is written `bell = true` (what `settings set` writes) or `bell = "on"`.
 
 | Key | Values (default first) | Effect |
 |---|---|---|
