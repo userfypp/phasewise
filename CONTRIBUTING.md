@@ -17,42 +17,28 @@ bug, include:
 
 ### Labels
 
-Every issue has one `type:` label (`bug`, `feature`, `test`, `docs`, `chore` or
-`design`, a decision to make before building), usually one or two `area:`
-labels (`cli`, `tui`, `engine`, `agents`, `git`, `plan`, `state`, `release`)
-and, once planned, a `priority:` label (`high` is next up, `medium` planned,
-`low` no rush). `agent: claude` and `agent: codex` mark issues specific to one
-agent. `status: needs info` and `status: blocked` say what an issue is waiting
-for. The type labels match the Conventional Commit types of pull request
-titles. Issues with `good first issue` or `help wanted` are open to anyone.
+Each issue has one `type:` (`bug`, `feature`, `test`, `docs`, `chore`, or `design`
+for a decision to make before building), one or two `area:` labels and, once
+planned, a `priority:` (`high` is next up, `medium` planned, `low` no rush). The
+areas follow the code: `cli` (commands and their messages), `tui` (the screens),
+`engine` (the phase cycle, checks and limits), `agents` (Claude Code and Codex
+and their output), `git` (the run branch and checkpoints), `plan` (the plan
+format and settings), `state` (`state.json`, the lock, recovery) and `release`
+(packaging and CI). An issue that touches two areas gets both. `agent: claude`
+and `agent: codex` mark issues that only affect one agent, and `status: needs
+info` and `status: blocked` say what an issue is waiting for. The type labels
+match the Conventional Commit types of pull request titles.
 
-### How issues are classified
-
-Issues are described by labels on three independent axes, and by nothing else:
-
-| Axis | Labels | Rule |
-|---|---|---|
-| Type | `type: bug`, `feature`, `test`, `docs`, `chore`, `design` | exactly one |
-| Area | `area: cli`, `tui`, `engine`, `agents`, `git`, `plan`, `state`, `release` | one or two |
-| Priority | `priority: high`, `medium`, `low` | once planned |
-
-There are no parent issues or epics: a parent can only express one axis, so it
-ends up contradicting the labels. To see a slice, filter on the labels, for
+There are no parent issues or epics. To see a slice, filter by label, for
 example [bugs in the TUI](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22type%3A+bug%22+label%3A%22area%3A+tui%22).
-An issue that spans two areas carries both labels. The areas follow the
-modules: `cli` the command line and its messages, `tui` the screens, `engine`
-the phase cycle, checks and limits, `agents` Claude Code and Codex and their
-output, `git` the run branch and checkpoints, `plan` the plan format and the
-settings, `state` `state.json`, the lock and recovery, `release` packaging and
-CI.
 
 ### Where to start
 
-- [`good first issue`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22): one module, a clear symptom, and an existing test that shows where a new one goes. Start here.
-- [`help wanted`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22): well specified, no rush on the maintainer's side; a bit more to read first.
-- Anything else, including `type: design`: open a comment before you start, because the answer is not settled yet.
+- [`good first issue`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22): one module and a clear symptom, with a nearby test that shows where yours goes. Start here.
+- [`help wanted`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22): well specified, with a bit more to read first.
+- Anything else, `type: design` included: say so on the issue before you start, because the answer may not be settled.
 
-Comment on the issue you pick so nobody else starts it; a maintainer assigns it. Read [AGENTS.md](AGENTS.md#rules) for the code rules and run the quality gate before opening a pull request.
+Comment on the issue you pick and wait for the assignment. Read the code rules in [AGENTS.md](AGENTS.md#rules) and run the quality gate before you open a pull request.
 
 Report vulnerabilities privately, as described in the
 [security policy](SECURITY.md), never in a public issue.

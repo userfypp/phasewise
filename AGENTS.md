@@ -20,13 +20,15 @@ and stops for the user's review.
   are made (by tooling, from pull request titles; `scripts/release-notes.py` writes the notes).
 - [docs/user-guide.md](docs/user-guide.md) and
   [docs/plan-format.md](docs/plan-format.md): the behaviour users rely on.
+- [.claude/skills/maintain](.claude/skills/maintain/SKILL.md): the `/maintain` skill
+  for triage and small fixes while the maintainer is away. It never merges.
 
 Source: `src/` — `cli` (clap, dispatch, exit codes), `ops` (run-level
 operations shared by CLI and TUI), `engine` (one phase cycle), `plan`,
 `prompt` (every prompt text), `agent/` (`claude`, `codex`), `verify`, `git`
 (the only module that runs git), `state` (`state.json`, lock, recovery),
-`process` (process groups, signals), `display` and `style` (text shared by CLI
-and TUI), `doctor`, and `tui/`: one loop for the home and run screens in
+`process` (process groups, signals), `settings` (the user settings file),
+`display` and `style` (text shared by CLI and TUI), `doctor`, and `tui/`: one loop for the home and run screens in
 `mod.rs`, pure state machines in `home.rs` and `app.rs`, what they share in
 `shared.rs`, rendering in `home_view.rs`, `view.rs` and `widgets.rs`, and
 loaders in `data.rs`. The engine and `ops` never print or draw: they send

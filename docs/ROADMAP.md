@@ -2,20 +2,19 @@
 
 What may come. Each item is a GitHub issue, which is where the discussion
 happens and where progress is tracked; this page is only the map. Nothing here
-is promised. An issue that makes the case for another idea is welcome (see
+is promised, and an issue that makes the case for another idea is welcome (see
 [Labels](../CONTRIBUTING.md#labels)).
 
-## How issues are organised
+## How to read this
 
-Issues carry a type, an area and, once planned, a priority, as
-[CONTRIBUTING.md](../CONTRIBUTING.md#how-issues-are-classified) explains. There
-are no parent issues. Priority decides the order, whatever the area:
+Every issue has a type, an area and, once planned, a priority. The priority sets
+the order, whatever the area:
 
 - [`priority: high`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+high%22): next up.
 - [`priority: medium`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+medium%22): planned.
 - [`priority: low`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+low%22): no rush.
 
-Bugs are not listed below: filter by [`type: bug`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22type%3A+bug%22). The lists below are the features, tests, chores and open design questions, by area.
+Bugs are not listed below; filter by [`type: bug`](https://github.com/userfypp/phasewise/issues?q=is%3Aissue+is%3Aopen+label%3A%22type%3A+bug%22). The lists are the features, tests, chores and open design questions, by area.
 
 ## By area
 
