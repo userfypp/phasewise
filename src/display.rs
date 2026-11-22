@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, Zoned};
+use jiff::{Timestamp, ZonedDateTime};
 
 use crate::agent::claude::CLAUDE_MODELS;
 use crate::agent::{AgentEvent, RateWindow};
@@ -398,8 +398,10 @@ fn window_label(name: &str) -> &str {
 
 /// `23:00` when `at` is on the same local day as `now`, else `Thu 12:00`.
 fn clock_text(at: i64, now: Timestamp, tz: &TimeZone) -> Option<String> {
-    let at: Zoned = Timestamp::from_second(at).ok()?.to_zoned(tz.clone());
-    let now = now.to_zoned(tz.clone());
+    let at: ZonedDateTime = Timestamp::from_second(at)
+        .ok()?
+        .to_zoned_datetime(tz.clone());
+    let now = now.to_zoned_datetime(tz.clone());
     let format = if at.date() == now.date() {
         "%H:%M"
     } else {
