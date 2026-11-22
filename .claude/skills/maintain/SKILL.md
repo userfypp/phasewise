@@ -72,7 +72,7 @@ Fetch open issues, and recently closed ones to avoid duplicates. For each:
 - Already fixed on `main` (find the commit or PR and check the code, not only the title): close with `state_reason: completed` and a comment linking the evidence.
 - Duplicate of another: close as `duplicate` with the link.
 - Wrong or missing labels: fix them following CONTRIBUTING (`type:`, `area:`, `priority:`).
-- Missing or wrong group: every issue has exactly one parent `epic` (CONTRIBUTING, "Groups"). Attach an orphan with the sub-issue tool and `replace_parent`; never create a new group. Keep `docs/ROADMAP.md` in step only when your own PR changes an issue it lists.
+- Inconsistent labels: every open issue has exactly one `type:`, at least one `area:` and, once planned, one `priority:` (CONTRIBUTING, "How issues are classified"). Fix gaps and contradictions; never add parent issues or epics.
 - Missing information you cannot get from the code: comment once and add `status: needs info`.
 - Never close because it is old; only because it is verifiably done, duplicated or contradicted.
 
@@ -101,7 +101,7 @@ that can fail, doc/code drift, dead code, flaky or network-dependent tests,
 stale dependencies. Verify each finding by reading the code or running a test.
 File an issue only if it is concrete (file and line, expected vs actual), not a
 duplicate (search open and closed first), and follows the issue templates and
-labels, and attach it to its group (see `issues`). Style preferences are not findings.
+labels, and give it its type, area and priority labels. Style preferences are not findings.
 
 ## Report
 
