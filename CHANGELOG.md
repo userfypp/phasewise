@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file. From version
 the merged pull requests. The project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/userfypp/phasewise/compare/v0.3.0...v0.3.1) (2026-11-22)
+
+
+### Fixed
+
+* **engine:** cap the agent's stdout and stderr logs at 64 MiB ([#207](https://github.com/userfypp/phasewise/issues/207)) ([de00c1e](https://github.com/userfypp/phasewise/commit/de00c1ee8bdbdb4ee4bfc6f97a3e17ba2e6965f5))
+* **plan:** reject control characters in titles, near-miss fences, misplaced front matter and empty checks ([#206](https://github.com/userfypp/phasewise/issues/206)) ([25afa7d](https://github.com/userfypp/phasewise/commit/25afa7d3a3cc977367cfd1c8e125ae20343490bb))
+* **settings:** accept "on" and "off" as text for a bool setting in the file ([#211](https://github.com/userfypp/phasewise/issues/211)) ([75c3613](https://github.com/userfypp/phasewise/commit/75c3613754731c4eecd8f3355751778c85526d1f))
+* **tui:** drop every key but Ctrl-C while the terminal is too small ([#187](https://github.com/userfypp/phasewise/issues/187)) ([57c5a44](https://github.com/userfypp/phasewise/commit/57c5a44d6f6c58dd147a9256f18f777067d0ad8d))
+
+
+### Documentation
+
+* describe the eight issue groups and reorganise the roadmap around them ([#212](https://github.com/userfypp/phasewise/issues/212)) ([74ecd47](https://github.com/userfypp/phasewise/commit/74ecd470dc017dff688e32967d7d2035444fb150))
+* explain scripting and CI with phasewise ([#208](https://github.com/userfypp/phasewise/issues/208)) ([9323080](https://github.com/userfypp/phasewise/commit/932308019b2846069471efcd8dc85602c23d8279))
+* refresh CONTRIBUTING and the roadmap ([#214](https://github.com/userfypp/phasewise/issues/214)) ([57dd219](https://github.com/userfypp/phasewise/commit/57dd21951e06758633536417839b8f8ba6becf79))
+
 ## [0.3.0](https://github.com/userfypp/phasewise/compare/v0.2.0...v0.3.0) (2026-11-17)
 
 
